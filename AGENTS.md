@@ -264,7 +264,15 @@ compiler; CI checks `red-toolchain-hybrid.red` over three generations.
   241/242: both 6513664 bytes, `--list-targets` leads with `MSDOS-X86-64`, a
   default build prints four lines, and a Red/System build with
   `-t Windows-X86-64` carries sub-system 2.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler227.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler264.exe`
+  (263->264, output 6520832 bytes; the two differ in 25 bytes -- the PE
+  timestamp, checksum, output-name digit and the two build clocks -- so the
+  chain is at a fixed point). 264 carries the **Objective-C super call** fix: on
+  Darwin an objc message's trailing arguments started at x0, the receiver's own
+  register, so a drawn button cell reached AppKit with garbage and both the
+  View-smoke suite and every GUI-console exit crashed. See "An Objective-C
+  super call started its trailing arguments at x0" below.
+- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler227.exe`
   (226->227, output 6450176 bytes). 227 carries the **ARM64 out-of-range
   frame load** fix: an ARM64-hosted toolchain could not compile *anything*
   for Linux-ARM64 or Darwin-ARM64 -- every build died with `emission
@@ -2390,6 +2398,96 @@ its runtime" report is worth re-testing serially before it is believed.
   itself is `#define handle! [pointer! [integer!]]` in
   `runtime/definitions.reds` -- it is *not* in the RSIR `type-kinds` table, so
   a standalone `.reds` that has not included the runtime cannot use it.)
+
+## An Objective-C super call started its trailing arguments at x0
+
+The last red CI leg, `test-darwin-arm64 / macOS-ARM64-View-Smoke`, and the crash
+behind it were real, not a probe artifact: `unview/all` over a drawn button died
+with `EXC_BREAKPOINT`/`SIGTRAP`, and because the macOS GUI console's `do-quit`
+(`modules/view/backends/macOS/gui.reds:1121`) *is* `unview/all` then `halt`,
+**every** console exit crashed (exit 133).
+
+It is the same defect as the View-smoke crash, and the report says so frame for
+frame: `console262.app-2026-09-28-041035.ips` against
+`smoke262-2026-09-28-022532.ips` -- libobjc (`0x5bf4, 0x594c, 0x594c, 0x267d4,
+0x2675c, 0x269ec, 0xea48, 0x439a0`) into AppKit (`0x62804, 0x14ab58`), two
+frames in the Red binary, then AppKit again (`0xc64d90, 0x14a9f4, 0x6c93b8`): a
+button-cell draw reaching `setControlView:` / `objc_storeWeak` with a garbage
+object.
+
+**Root cause -- 203's fix was applied to one of its two sites.** The
+trailing-argument *placement* was keyed on
+`any [target-abi = ABI_AAPCS64 (call-flags and OBJC) <> 0]`, but the *snapshot*
+of the registers the fixed parameters took (`named-integers` / `named-floats`,
+through `abi-parameter-location`) stayed keyed on `target-abi = ABI_AAPCS64`
+alone. Apple's ABI is not AAPCS64, so on Darwin an objc call placed its trailing
+arguments from **x0** -- the receiver's own register, which the call sequence
+rewrites right after -- and the callee read garbage. Concretely
+`objc_msgSendSuper [super cmd ... view]` handed AppKit whatever x0 then held in
+place of `view`. Nothing else could have shown it: `objc_msgSend` with three
+arguments fits the registers, and only a *super* call with trailing arguments
+past `self`/`op` starts the sequence where the receiver lives.
+
+The fix is one shared predicate gating both sites --
+`trailing-in-registers?: any [target-abi = ABI_AAPCS64 (call-flags and OBJC) <> 0]`
+in `compile-function` (`system/codegen/arm64-codegen.reds`).
+
+What does *not* crash, and so bounds the defect: the console's own
+area/field/caret teardown is clean on **both** generations
+(`["start" "relisted 1" "torn 0"]`), so this needs a drawn `NSButtonCell`.
+
+Verified on Apple silicon, same script, two compilers:
+
+| binary | staged proof | crash report |
+|---|---|---|
+| `console262` (pre-fix) | `["start"]` -- stops at the `view/no-wait` | new `console262.app-2026-09-28-041035.ips` |
+| `console263` (fixed) | `["start" "view-ok" "pane 1" "torn"]` | none |
+
+and for the suite binary the same pair: `smoke262` two reports, `smoke263` zero.
+The Sep-21 `gui-console` reports are a *different* signature (SIGABRT
+`doesNotRecognizeSelector:` in the event-routing path) and did not recur --
+recorded as unreproduced, not as fixed.
+
+Two controls say the change reaches nothing else. The chain step 263 -> 264 is a
+fixed point at 6,520,832 bytes with 25 differing bytes (PE timestamp, checksum,
+the two `movabs` build clocks, the output name's last digit, the two
+`dd-Mmm-yyyy/h:mm:ss` dates) -- that is the Windows/x64 gate. Cross-compiling
+`red-bootstrap-hybrid.red` for Linux-ARM64 with 262 and with 263 gives
+5,502,512 bytes both and 21 differing bytes: two clock strings, one byte of the
+embedded `-o` name, and a five-byte instruction window at each of `0x412148` and
+`0x413204`. **Building the same source with 263 and 264 -- two compilers whose
+arm64 logic is identical -- moves exactly those two windows again**, so they are
+clock-derived address immediates, not a decision: no branch or call encoding
+differs, hence no codegen decision moved on AAPCS64, which is what licenses
+skipping a full Linux/Windows suite re-run. `sync-codegen-sites.py --check`:
+1771 sites, 0 problems.
+
+Traps met while proving it, all of them costly:
+
+- **A GUI app bundle launched over ssh discards stdout**, and in the GUI console
+  `print` is hooked into the view buffer anyway, so a crash mid-script leaves
+  *nothing* to read. The probe has to write an incremental log at every stage
+  (`mark: func [s][append steps s write log mold steps]`) and the verdict comes
+  from that file plus the `.ips`, never from the console.
+- With a script argument the console sets `win/visible?` false, so it neither
+  draws nor runs the REPL and simply blocks -- "the console hangs" was a
+  misreading, not a defect.
+- The console protects its own face from `unview/all`
+  (`svs/pane: next svs/pane`, `environment/console/GUI/gui-console.red:311`), so
+  a probe that only counts the pane reports `pane before 0` and proves nothing.
+  Create real button faces *inside* the console.
+- `reform` has no value in this fork; `rejoin` is the one that exists.
+- `-o foo.app` yields `foo.app.app` -- the macOS packager appends the extension.
+- A local shell writes CRLF into scp'd scripts, and even after `tr -d "\r"` a
+  bash wrapper misbehaved over the tunnel (it printed
+  `line 9: report-dir=...: No such file or directory` and produced nothing).
+  Short inline ssh commands with detached `nohup` launches were reliable.
+- **A bootstrap self-compile without `-r` is a dev-mode image and looks like a
+  size regression**: `hybrid-compiler264.exe` came out at 4,819,456 bytes,
+  reproducible to the byte, and `dumpbin /dependents` shows why -- it imports
+  `LIBREDRT.DLL` where the release image embeds ~1.7 MB of runtime. The chain
+  step is `-r` (target defaults to `MSDOS-X86-64`); check the dependency list
+  before believing any generation-size drop.
 
 ## A queue cell read without an acquire loses an item, and the single consumer then spins forever
 

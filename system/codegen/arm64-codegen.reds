@@ -5786,7 +5786,8 @@ arm64-codegen: context [
 				custom-call?
 					reference-comparison? floating? region-link? tracked? right-ready?
 					syscall? atomic-old? atomic-overflow? packed-call?
-						aggregate-return? hfa-return? aggregate-copy? adopt-depth? [logic!]
+						aggregate-return? hfa-return? aggregate-copy? adopt-depth?
+						trailing-in-registers? [logic!]
 			syscall-id [integer!]
 	][
 		instruction-offsets: scratch/instruction-offsets + first-instruction
@@ -8527,13 +8528,25 @@ arm64-codegen: context [
 					; materialized the single value, and the indirect path
 					; injects the X0 move just before call-register.
 					if custom-call? [slot: 0]
-					;-- Under AAPCS64 the trailing arguments of a variadic call
-					;-- carry on from the registers the fixed ones took, so
-					;-- snapshot where those left off.
+					;-- Trailing arguments carry on from the registers the fixed
+					;-- ones took -- under AAPCS64 for every variadic call, and
+					;-- for an Objective-C message on either ABI, since objc_msgSend
+					;-- is entered with self in x0 and op in x1 and the rest
+					;-- continuing from there. The snapshot below and the placement
+					;-- in the loop share this one predicate: Apple's ABI is not
+					;-- AAPCS64, so gating the snapshot on AAPCS64 alone left
+					;-- `objc_msgSendSuper [super cmd ... view]` on Darwin starting
+					;-- its trailing arguments at x0 -- the receiver's own register,
+					;-- rewritten right after -- and the callee reading garbage for
+					;-- `view`.
 					named-integers: 0
 					named-floats: 0
-					if all [
+					trailing-in-registers?: any [
 						target-abi = ABI_AAPCS64
+						(call-flags and OBJC) <> 0
+					]
+					if all [
+						trailing-in-registers?
 						(call-flags and VARIADIC) <> 0
 						(call-flags and TYPED) = 0
 						not packed-call?
@@ -8665,10 +8678,7 @@ arm64-codegen: context [
 							;   x1 holding whatever the argument computation
 							;   last touched, and the runtime answers
 							;   "unrecognized selector sent to class".
-							either any [
-								target-abi = ABI_AAPCS64
-								(call-flags and OBJC) <> 0
-							][
+							either trailing-in-registers? [
 								status: abi-trailing-argument view scratch
 									argument-origin call-parameter-count
 									(slot - call-parameter-count)

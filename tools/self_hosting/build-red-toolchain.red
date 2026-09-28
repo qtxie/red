@@ -193,6 +193,16 @@ compile-toolchain: has [result][
 ]
 
 verify-toolchain: has [result info count targets expected][
+	;-- Every check below *executes* the toolchain, so a cross-built image can only
+	;-- be verified on the machine whose target it is -- which is exactly what the
+	;-- Darwin and Linux legs of CI do, each building for its own host. Here, only
+	;-- the image is reachable: the shape of the binary says the target was honoured.
+	if target <> host [
+		check-image output target
+		print ["Built" target "toolchain on" host "host;" output "must be verified on a" target "host"]
+		exit
+	]
+
 	result: run-checked "self-check" output ["--self-check"]
 	count: resource-count result/2
 

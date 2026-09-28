@@ -266,8 +266,9 @@ compiler; CI checks `red-toolchain-hybrid.red` over three generations.
   `-t Windows-X86-64` carries sub-system 2.
 - Current baseline: `build/self-hosting/merge-red64/hybrid-compiler264.exe`
   (263->264, output 6520832 bytes; the two differ in 25 bytes -- the PE
-  timestamp, checksum, output-name digit and the two build clocks -- so the
-  chain is at a fixed point). 264 carries the **Objective-C super call** fix: on
+  timestamp, checksum, output-name digit and the two build clocks -- and 264
+  self-compiles to 265 at the same 6520832 bytes with 19, so the chain is at a
+  fixed point). 264 carries the **Objective-C super call** fix: on
   Darwin an objc message's trailing arguments started at x0, the receiver's own
   register, so a drawn button cell reached AppKit with garbage and both the
   View-smoke suite and every GUI-console exit crashed. See "An Objective-C
@@ -2436,17 +2437,31 @@ What does *not* crash, and so bounds the defect: the console's own
 area/field/caret teardown is clean on **both** generations
 (`["start" "relisted 1" "torn 0"]`), so this needs a drawn `NSButtonCell`.
 
-Verified on Apple silicon, same script, two compilers:
+Verified on Apple silicon, one script, both compilers. The script marks a stage
+in a file after each step (`view/no-wait` with a nested button, `unview/all`,
+then `quit`), because stdout from a GUI bundle over ssh is lost -- see the traps
+below. It is the *console*, so the report is an exit code, not an assertion:
 
-| binary | staged proof | crash report |
-|---|---|---|
-| `console262` (pre-fix) | `["start"]` -- stops at the `view/no-wait` | new `console262.app-2026-09-28-041035.ips` |
-| `console263` (fixed) | `["start" "view-ok" "pane 1" "torn"]` | none |
+| binary | staged proof | exit | crash report |
+|---|---|---|---|
+| `console262` (pre-fix) | `["start"]` -- dies inside the `view/no-wait` | **133** | new `console262.app-2026-09-28-045739.ips` |
+| `console263` (fixed) | `["start" "view-ok" "torn"]` | **0** | none |
 
 and for the suite binary the same pair: `smoke262` two reports, `smoke263` zero.
 The Sep-21 `gui-console` reports are a *different* signature (SIGABRT
 `doesNotRecognizeSelector:` in the event-routing path) and did not recur --
 recorded as unreproduced, not as fixed.
+
+CI agrees with the board: the same job, the same source, two pushes. Before the
+fix `macOS-ARM64-View-Smoke` died with `Process completed with exit code 133`
+(SIGTRAP); after it the process runs the whole suite and exits **1** on one
+assertion -- `text alignment bounds are invalid: [[4 64] [28 37] [52 61] [4 29]]`
+(`tests/source/view/macos-arm64-smoke.red`), whose third condition asks a
+one-line top-aligned face for fewer dark rows than a two-line one and measures
+60 against 25. That is a *measurement* question in the smoke probe's
+`dark-text-bounds`, deliberately left alone: crashes outrank pixels, and a suite
+that reports a wrong number is already a different failure class than one that
+never returns.
 
 Two controls say the change reaches nothing else. The chain step 263 -> 264 is a
 fixed point at 6,520,832 bytes with 25 differing bytes (PE timestamp, checksum,
@@ -2469,6 +2484,14 @@ Traps met while proving it, all of them costly:
   *nothing* to read. The probe has to write an incremental log at every stage
   (`mark: func [s][append steps s write log mold steps]`) and the verdict comes
   from that file plus the `.ips`, never from the console.
+- **`halt` does not end a console script.** Once the console is loaded, `halt`
+  is `throw/name 'halt-request 'console` (`environment/console/engine.red:419`,
+  "Stops evaluation and returns to the input prompt"), so a probe ending in
+  `halt` sits alive at the prompt -- over ssh with nobody at the keyboard,
+  forever, with no crash report. That looked like "the fix stopped crashing but
+  the process hangs"; it is the documented meaning, and the exit-code gate is
+  `quit` (the `halt: :quit` default in `environment/functions.red` is only what
+  a *non*-console program gets).
 - With a script argument the console sets `win/visible?` false, so it neither
   draws nor runs the REPL and simply blocks -- "the console hangs" was a
   misreading, not a defect.

@@ -30,6 +30,27 @@ Red/System [
 	]
 ]
 
+#either any [target = 'X86-64 target = 'ARM64] [
+	timespec!: alias struct! [
+		tv_sec		 [integer!]	;-- low 32 bits of time_t
+		tv_sec-high [integer!]
+		tv_nsec		 [integer!]	;-- low 32 bits of long
+		tv_nsec-high [integer!]
+	]
+][
+	timespec!: alias struct! [
+		tv_sec	[integer!]
+		tv_nsec	[integer!]
+	]
+]
+
+#switch OS [
+	macOS	 [#define CLOCK_MONOTONIC 6]
+	FreeBSD [#define CLOCK_MONOTONIC 4]
+	NetBSD	 [#define CLOCK_MONOTONIC 6]
+	#default [#define CLOCK_MONOTONIC 1]	;-- Linux, Android
+]
+
 tm!: alias struct! [
 	sec		[integer!]		;-- Seconds		[0-60] (1 leap second)
 	min		[integer!]		;-- Minutes		[0-59]
@@ -113,6 +134,11 @@ pollfd!: alias struct! [
 			tv		[timeval!]
 			tz		[integer!]			;-- obsolete
 			return: [integer!]			;-- 0: success -1: failure
+		]
+		clock_gettime: "clock_gettime" [
+			clock_id	[integer!]
+			tp			[timespec!]
+			return:		[integer!]
 		]
 		difftime: "difftime" [
 			end		[integer!]
@@ -500,6 +526,20 @@ get-time: func [
 		last-precise-time: t
 	]
 	t
+]
+
+perf-time: func [
+	;; Monotonic hardware clock in seconds since boot; gettimeofday's granularity
+	;; is fine but it is still a wall clock, and on Windows the equivalent only
+	;; moves on the OS timer tick. This is what GC phase timings run on.
+	return: [float!]
+	/local
+		ts	[timespec! value]
+		t	[float!]
+][
+	clock_gettime CLOCK_MONOTONIC ts
+	t: as-float ts/tv_sec
+	(as-float ts/tv_nsec) / 1E9 + t
 ]
 
 get-timezone: func [

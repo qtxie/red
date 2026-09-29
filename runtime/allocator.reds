@@ -416,6 +416,7 @@ free-all: func [
 	node-registry/capacity: 0
 	node-registry/next: 1
 	node-registry/free: 0
+	if collector/stats? [collector/dump-stats]
 ]
 
 ;-------------------------------------------

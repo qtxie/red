@@ -35,6 +35,13 @@ collector: context [
 		nodes-cycles [integer!]							;-- nb of node frames compaction runs
 		pinned-frames [integer!]						;-- conservatively retained series frames in current cycle
 		pinned-bytes  [integer!]						;-- bytes retained by conservative frame pins
+		mark-time	 [float!]							;-- cumulative marking seconds		(RED_GC_STATS)
+		scan-time	 [float!]							;-- cumulative native stack scan seconds
+		sweep-time	 [float!]							;-- cumulative sweep/compaction seconds
+		moved-series [integer!]							;-- series buffers relocated by compaction
+		moved-bytes  [integer!]							;-- payload bytes relocated
+		stack-slots  [integer!]							;-- conservative stack words examined
+		stack-roots  [integer!]							;-- stack words that rooted a series
 	]
 	
 	ext-size: 100
@@ -44,12 +51,17 @@ collector: context [
 	refs: as int-ptr! 0
 	refs-size: 20000
 
-	
+
 	indent: 0
 
 	stress?: no										;-- RED_GC_STRESS: run GC passes at a forced pace
 	stress-period: 1								;-- GC every Nth allocation while stressed
 	stress-count: 0
+
+	stats?: no										;-- RED_GC_STATS: accumulate per-phase timings and counters
+	stats-countdown: 1								;-- dump every Nth cycle (1 = the first one)
+
+	#define GC_STATS_PERIOD 100
 
 	read-stress-env: func [
 		period [int-ptr!]
@@ -86,6 +98,47 @@ collector: context [
 		yes
 	]
 
+	read-stats-env: func [
+		return: [logic!]
+		/local len [integer!]
+	][
+		#either OS = 'Windows [
+			len: platform/get-env #u16 "RED_GC_STATS" 0 0
+		][
+			len: platform/get-env "RED_GC_STATS" 0 0
+		]
+		len > 0											;-- presence only: any value switches it on
+	]
+
+	check-abi: does [
+		;-- Startup invariant check. The one thing `#if` cannot express today is a
+		;-- compile-time size assertion -- the preprocessor only knows its own
+		;-- symbols, not `size?` -- so the value-cell contract is checked once at
+		;-- init instead. It is what catches a struct whose width silently changed
+		;-- on one target (the macOS-arm64 float32!/float! case) and moved every
+		;-- stack slot the pointer bitmap describes with it.
+		unless size? cell! = 16 [
+			print-line ["*** ABI violation: size? cell! = " size? cell! ", expected 16"]
+			quit -1
+		]
+		unless size? node-handle! = 4 [
+			print-line ["*** ABI violation: size? node-handle! = " size? node-handle! ", expected 4"]
+			quit -1
+		]
+		unless all [
+			size? red-series!	= 16
+			size? red-block!	= 16
+			size? red-string!	= 16
+			size? red-object!	= 16
+			size? red-context!	= 16
+			size? red-function!	= 16
+			size? red-word!		= 16
+		][
+			print-line ["*** ABI violation: a value cell is not 16 bytes"]
+			quit -1
+		]
+	]
+
 	init: func [
 		/local mask [integer!]
 	][
@@ -93,8 +146,17 @@ collector: context [
 		stats/nodes-cycles:		0
 		stats/pinned-frames:	0
 		stats/pinned-bytes:	0
+		stats/mark-time:		0.0
+		stats/scan-time:		0.0
+		stats/sweep-time:		0.0
+		stats/moved-series:		0
+		stats/moved-bytes:		0
+		stats/stack-slots:		0
+		stats/stack-roots:		0
 		prefs/nodes-gc-trigger: 5						;-- trigger if node frame is unchanged after 5 cycles
 		stress?: read-stress-env :stress-period
+		stats?:  read-stats-env
+		check-abi
 	]
 
 	compare-cb: func [
@@ -1045,6 +1107,7 @@ collector: context [
 			p <= as int-ptr! FFFFh
 			p >= as int-ptr! FFFFF000h
 		]][return refs]
+		stats/stack-slots: stats/stack-slots + 1
 		if frames-list/find p FRAME_NODES [
 			node: as node! p
 			if all [
@@ -1057,6 +1120,7 @@ collector: context [
 					keep-raw sp
 					node: as node! sp/value
 					mark-series-root as series! node/value yes
+					stats/stack-roots: stats/stack-roots + 1
 					return refs
 				]
 			]
@@ -1070,6 +1134,7 @@ collector: context [
 			managed?: all [s <> null any [not root? mark-series-root s own?]]
 			either managed? [
 				if store? [refs: store-stack-ref p sp refs]
+				stats/stack-roots: stats/stack-roots + 1
 			][
 				frames-list/pin p
 			]
@@ -1141,6 +1206,8 @@ collector: context [
 		tail: src + size
 		until [
 			set-node-value s/node as int-ptr! destination	;-- update the node pointer before moving the bytes
+			stats/moved-series: stats/moved-series + 1
+			stats/moved-bytes:  stats/moved-bytes  + s/size
 			offset: as-integer (as byte-ptr! s/offset) - (as byte-ptr! s)
 			s/offset: as cell! (as byte-ptr! destination) + offset
 			offset: as-integer (as byte-ptr! s/tail) - (as byte-ptr! s)
@@ -1841,16 +1908,36 @@ collector: context [
 		]
 	]
 
+	dump-stats: func [									;-- cumulative totals since init (RED_GC_STATS)
+		/local buf [c-string!]
+	][
+		buf: as c-string! allocate 128
+		print-line ["^/== GC stats == (RED_GC_STATS)"]
+		print-line ["  cycles        : " stats/cycles]
+		sprintf [buf "  mark time     : %.1f ms" stats/mark-time * 1000.0]  print-line buf
+		sprintf [buf "  scan time     : %.1f ms" stats/scan-time * 1000.0]  print-line buf
+		sprintf [buf "  sweep time    : %.1f ms" stats/sweep-time * 1000.0] print-line buf
+		sprintf [buf "  total time    : %.1f ms" (stats/mark-time + stats/scan-time + stats/sweep-time) * 1000.0] print-line buf
+		print-line ["  moved series  : " stats/moved-series]
+		print-line ["  moved bytes   : " stats/moved-bytes]
+		print-line ["  stack slots   : " stats/stack-slots]
+		print-line ["  stack roots   : " stats/stack-roots]
+		print-line ["  pinned (last) : " stats/pinned-frames " frames / " stats/pinned-bytes " bytes"]
+		free as byte-ptr! buf
+	]
+
 	do-mark-sweep: func [
 			/local
 				p		[int-ptr!]
 				global-node [node-handle!]
 				marker	[ptr-ptr!]
+				timed?	[logic!]
+				t0 t1 t2 [float!]						;-- phase start stamps (RED_GC_STATS)
+				d-mark d-scan d-sweep [float!]			;-- this cycle's phase durations
 		#if debug? = yes [
 			file	[c-string!]
 			saved	[integer!]
 			buf		[c-string!]
-			tm tm1	[float!]
 		]
 			cb		[function! []]
 	][
@@ -1858,6 +1945,12 @@ collector: context [
 		system/atomic/store :state GC_RUNNING			;-- camera widget relies on threads and reads this value.
 		gc-frame: as ptr-ptr! system/stack/frame
 		gc-frame: gc-frame/value						;-- skip the collector's own frames when scanning
+
+		timed?: any [stats? verbose > 0]				;-- RED_GC_STATS, or a verbose debug build
+		d-mark: 0.0
+		d-scan: 0.0
+		d-sweep: 0.0
+		if timed? [t0: platform/perf-time]
 
 		#if debug? = yes [if verbose > 1 [
 			#if OS = 'Windows [platform/dos-console?: no]
@@ -1870,7 +1963,6 @@ collector: context [
 		#if debug? = yes [
 			if verbose > 3 [stack-trace]
 			buf: "                                                               "
-			tm: platform/get-time yes yes
 			if verbose > 0 [print [
 				"root: " block/rs-length? root "/" ***-root-size
 				", runs: " stats/cycles
@@ -1924,10 +2016,11 @@ collector: context [
 		
 		#if debug? = yes [if verbose > 1 [probe "scanning native stack"]]
 		frames-list/rebuild								;-- refresh nodes and series frames list
+		if timed? [t1: platform/perf-time  d-mark: t1 - t0]
 		scan-stack-refs yes
 		mark-pinned-frames
 		if refs <> null [cycles/refresh]
-		#if debug? = yes [tm1: (platform/get-time yes yes) - tm]	;-- marking time
+		if timed? [t2: platform/perf-time  d-scan: t2 - t1]
 
 		#if debug? = yes [if verbose > 1 [probe "sweeping..."]]
 		externals/sweep
@@ -1936,6 +2029,7 @@ collector: context [
 		collect-big-frames
 		nodes-list/flush
 		collect-node-frames
+		if timed? [d-sweep: (platform/perf-time) - t2]
 
 		if refs <> null [
 			_hashtable/rs-destroy refs					;-- clear all the node entries
@@ -1949,9 +2043,23 @@ collector: context [
 		
 		stats/cycles: stats/cycles + 1
 
+		if timed? [
+			stats/mark-time:  stats/mark-time  + d-mark
+			stats/scan-time:  stats/scan-time  + d-scan
+			stats/sweep-time: stats/sweep-time + d-sweep
+			;-- Print here rather than at exit: a plain executable never reaches
+			;-- red/cleanup (only libRed and View do), so an exit hook would
+			;-- print nothing. Throttled so per-cycle I/O cannot distort the
+			;-- very timings it reports.
+			stats-countdown: stats-countdown - 1
+			if stats-countdown <= 0 [
+				stats-countdown: GC_STATS_PERIOD
+				dump-stats
+			]
+		]
+
 		#if debug? = yes [
-			tm: (platform/get-time yes yes) - tm - tm1
-			sprintf [buf ", mark: %.1fms, sweep: %.1fms" tm1 * 1000.0 tm * 1000.0]
+			sprintf [buf ", mark: %.1fms, scan: %.1fms, sweep: %.1fms" d-mark * 1000.0 d-scan * 1000.0 d-sweep * 1000.0]
 			if verbose > 0 [probe [" => " memory-info null 1 buf]]
 			if verbose > 0 [
 				print [
@@ -1978,7 +2086,7 @@ collector: context [
 		if any [not active? running?][exit]
 		do-mark-sweep
 	]
-	
+
 	register: func [
 		cb [int-ptr!]
 		/local p [ptr-ptr!]

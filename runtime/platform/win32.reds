@@ -156,6 +156,11 @@ platform: context [
 		dwHighDateTime	[integer!]
 	]
 
+	tagLARGE_INTEGER: alias struct! [
+		LowPart		[integer!]
+		HighPart	[integer!]
+	]
+
 	tagSYSTEMTIME: alias struct! [
 		year-month	[integer!]
 		week-day	[integer!]
@@ -283,6 +288,14 @@ platform: context [
 			]
 			GetSystemTimeAsFileTime: "GetSystemTimeAsFileTime" [
 				time			[tagFILETIME]
+			]
+			QueryPerformanceFrequency: "QueryPerformanceFrequency" [
+				freq			[tagLARGE_INTEGER]
+				return:			[logic!]
+			]
+			QueryPerformanceCounter: "QueryPerformanceCounter" [
+				count			[tagLARGE_INTEGER]
+				return:			[logic!]
 			]
 			GetSystemTime: "GetSystemTime" [
 				time			[tagSYSTEMTIME]
@@ -549,6 +562,39 @@ platform: context [
 			t: t + (mi / 1e9)
 		]
 		t
+	]
+
+	perf-freq: 0.0							;-- hardware clock ticks/second, cached on first use
+
+	int64-as-float: func [
+		x		 [tagLARGE_INTEGER]
+		return:  [float!]
+		/local
+			lo	 [integer!]
+			hi	 [integer!]
+			t	 [float!]
+	][
+		lo: x/LowPart
+		hi: x/HighPart
+		t: as-float (lo and 7FFFFFFFh)
+		if lo < 0 [t: t + 2147483648.0]
+		(as-float hi) * 4294967296.0 + t
+	]
+
+	perf-time: func [
+		;; Monotonic hardware clock in seconds since boot. Unlike get-time, whose
+		;; FILETIME only moves on the OS timer tick (~15.6 ms), it resolves phases.
+		return:  [float!]
+		/local
+			cnt	 [tagLARGE_INTEGER value]
+			freq [tagLARGE_INTEGER value]
+	][
+		if perf-freq = 0.0 [
+			QueryPerformanceFrequency freq
+			perf-freq: int64-as-float freq
+		]
+		QueryPerformanceCounter cnt
+		(int64-as-float cnt) / perf-freq
 	]
 
 	get-date: func [

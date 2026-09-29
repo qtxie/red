@@ -45,6 +45,8 @@ collector: context [
 		queue-peak	 [integer!]							;-- widest marking queue, in cell ranges
 		handle-bits	 [integer!]							;-- declared slots the handle bitmap named
 		probe-roots  [integer!]							;-- handles the range probe rooted that it did not
+		probe-new    [integer!]							;-- of those, ones nothing else had marked yet
+		probe-alias  [integer!]							;-- hits rejected: the word is wider than an index
 	]
 	
 	ext-size: 100
@@ -171,6 +173,8 @@ collector: context [
 		stats/stack-roots:		0
 		stats/handle-bits:		0
 		stats/probe-roots:		0
+		stats/probe-new:		0
+		stats/probe-alias:		0
 		prefs/nodes-gc-trigger: 5						;-- trigger if node frame is unchanged after 5 cycles
 		stress?: read-stress-env :stress-period
 		stats?:  read-stats-env
@@ -755,41 +759,68 @@ collector: context [
 	;-- deep-mark via mark-block-node, unit-1 is shallow-kept, and validated
 	;-- hashtables are deep-marked so nested keys/flags/blk stay live across GC.
 	;-- The slot arrives either because the frame's handle bitmap names it, or
-	;-- because the range probe below guessed it might. Both tests are the same
-	;-- one until the bitmap proves it misses nothing: `named?` only records who
-	;-- asked, so stats/probe-roots counts the guesses the bitmap did not cover.
+	;-- because the range probe below guessed it might. stats/probe-roots counts the
+	;-- guesses, stats/probe-new the ones that were a node's only root that cycle:
+	;-- the day probe-new stops moving is the day this probe can stop.
 	;-- The probe is a range test -- the registry takes any handle in (0, next) --
 	;-- and a node-handle! is a bare index, so an unrelated small integer cannot be
 	;-- told apart from a reference: a symbol id in a dead slot roots the series that
-	;-- happens to own that index. The 64-bit walk therefore confines it to declared
-	;-- slots, where root?'s rule for pointers already applies: a call in progress
-	;-- has its arguments rooted by the callee's own arg pass, so a gap word only
-	;-- holds what a completed call left behind. IA-32 publishes no usable frame
-	;-- shape and still probes the whole body.
+	;-- happens to own that index. Two rules narrow that. The 64-bit walk confines the
+	;-- probe to declared slots, where root?'s rule for pointers already applies: a
+	;-- call in progress has its arguments rooted by the callee's own arg pass, so a
+	;-- gap word only holds what a completed call left behind. The other, below, is
+	;-- that a candidate has to fill its word -- over the Red unit suite that rule cut
+	;-- the load-bearing rootings from 79 to 12 and kept 8810 words out of the walk.
+	;-- IA-32 publishes no usable frame shape and still probes the whole body; there a
+	;-- word is the index entire, so the second rule is already in force and only the
+	;-- first is missing.
 	mark-stack-handle: func [
 		sp [ptr-ptr!]
 		named? [logic!]									;-- yes when the handle bitmap asked
 		/local
 			handle [integer!]
+			p     [int-ptr!]
 			entry [ptr-ptr!]
 			node  [node!]
 			s     [series!]
+			flags [integer!]
+			unseen? [logic!]
 	][
 		handle: as integer! sp/value
 		if all [handle > 0 handle < node-registry/next][
-			unless named? [stats/probe-roots: stats/probe-roots + 1]
-			entry: node-registry/entries + (handle - 1)
-			if entry/value <> null [
-				node: as node! entry/value
-				if node/value <> null [
-					s: as series! node/value
-					either GET_UNIT(s) = 16 [
-						mark-block-node as int-ptr! sp
-					][
-						keep as int-ptr! sp
-						if GET_UNIT(s) = 1 [mark-hashtable-node node]
+			;-- The range test reads the low half only, so on a 64-bit target an address
+			;-- ending inside the registry's span answers to whoever owns that index and a
+			;-- stranger nothing refers to stays alive for the cycle. A node-handle! fills
+			;-- its word, so demanding the whole word leaves only values that can name a
+			;-- node at all -- except in a slot the bitmap named, whose upper half is just
+			;-- what the last 32-bit store there left behind.
+			p: sp/value
+			either any [named? p = as int-ptr! handle][
+				unless named? [stats/probe-roots: stats/probe-roots + 1]
+				entry: node-registry/entries + (handle - 1)
+				if entry/value <> null [
+					node: as node! entry/value
+					if node/value <> null [
+						s: as series! node/value
+						flags: s/flags
+						unseen?: either GET_UNIT(s) = 16 [
+							any [flags and flag-gc-mark = 0 flags and flag-gc-scan = 0]
+						][flags and flag-gc-mark = 0]
+						if unseen? [
+							;-- This walk runs last, so a node still unmarked here had no
+							;-- other root this cycle: the probe is what kept it alive.
+							stats/probe-new: stats/probe-new + 1
+						]
+						either GET_UNIT(s) = 16 [
+							mark-block-node as int-ptr! sp
+						][
+							keep as int-ptr! sp
+							if GET_UNIT(s) = 1 [mark-hashtable-node node]
+						]
 					]
 				]
+			][
+				stats/probe-alias: stats/probe-alias + 1	;-- an address, not a handle
 			]
 		]
 	]
@@ -1709,9 +1740,10 @@ collector: context [
 										(as byte-ptr! frm) - ((5 + idx) * size? pointer!)
 									]]
 									sp: as ptr-ptr! sp-address
-									;-- The bitmap owns the answer where it has one; the probe still
-									;-- speaks for the slots it does not name. stats/probe-roots counts
-									;-- how often it is the one that knows, which is the day it may stop.
+									;-- Both tests read the same slot: the bitmap for the handle it declared,
+									;-- the probe for whatever else might be one. Neither is allowed to answer
+									;-- for the other yet, so the counters below are the only place their
+									;-- disagreement is recorded.
 									named?: hbits and 1 <> 0
 									if named? [stats/handle-bits: stats/handle-bits + 1]
 									mark-stack-handle sp named?
@@ -2025,7 +2057,8 @@ collector: context [
 		print-line ["  moved bytes   : " stats/moved-bytes]
 		print-line ["  stack slots   : " stats/stack-slots]
 		print-line ["  stack roots   : " stats/stack-roots]
-		print-line ["  handle slots  : " stats/handle-bits " bitmap-named, " stats/probe-roots " probed"]
+		print-line ["  handle slots  : " stats/handle-bits " bitmap-named, " stats/probe-roots " probed (" stats/probe-new " nothing else rooted)"]
+		print-line ["  probe aliases : " stats/probe-alias " words too wide to be an index"]
 		print-line ["  mark queue    : " stats/queue-peak " ranges peak / " mark-queue/size " allocated"]
 		print-line ["  pinned (last) : " stats/pinned-frames " frames / " stats/pinned-bytes " bytes"]
 		free as byte-ptr! buf

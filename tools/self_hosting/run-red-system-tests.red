@@ -93,6 +93,10 @@ unit-sources: [
 	%exceptions-test.reds %modulo-test.reds %math-mixed-test.reds
 	%overflow-test.reds %vararg-test.reds %infix-test.reds %conditional-test.reds
 	%system-test.reds %atomic-test.reds %queue-test.reds %push-pop-test.reds
+	;-- The stack bitmap is not a language feature, so upstream has no unit that
+	;-- would pull it in: it is read by the collector and written by both backends,
+	;-- and only this suite can notice the two drifting apart.
+	%stack-bitmap-test.reds
 	%auto-tests/dylib-auto-test.reds
 ]
 if sixty-four? [

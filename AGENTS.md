@@ -26,8 +26,8 @@
 
 ## Test Suites
 
-- Red/System suite: 10593 tests / 12680 assertions / 0 failed (Windows x64)
-- Red suite: 9304 tests / 17998 assertions / 0 failed (all platforms)
+- Red/System suite: 10600 tests / 12736 assertions / 0 failed (Windows x64)
+- Red suite: 9305 tests / 18001 assertions / 0 failed (all platforms)
 - View headless: 148 tests / 249 assertions / 0 failed
 - Native View (Windows): 107 tests / 507 assertions / 0 failed
 - Compiler tests exit 1 by design (compile-failures are expected); use claimed/unclaimed tracking
@@ -42,6 +42,7 @@
 - Stack arguments: AAPCS64 rounds to 8-byte slots, Apple packs at natural alignment
 - Variadic imports need `[[variadic]` declaration
 - Frame displacement > 255 bytes needs destination register for address materialization
+- ARM64 dev-mode binaries DO run under qemu-user; `undefined symbol: curl_easy_strerror` is a stale stub `~/qemu-stublibs/libcurl.so.4`, not a qemu limit
 
 ### Collector/GC
 - Collector compacts series frames - raw buffer pointers die at allocations
@@ -50,7 +51,9 @@
 - `RED_GC_STRESS=N` forces collection every N allocations for testing
 - Dev mode bitmap selection: check if return address is in runtime image
 - Frame bitmaps are two streams over one slot numbering: pointers, then node-handle! flags
-- A handle sharing a slot's high half (member at offset 4) is not bitmap-visible - only the probe sees it
+- A handle sharing a slot's high half (member at offset 4) is not bitmap-visible, and the probe now rejects it - only naming the slot in the handle bitmap roots it
+- Probe candidates must fill their whole word (a 64-bit address's low half can land inside the registry span); `stats/probe-alias` counts the rejections
+- Dev-mode unit binaries run `libRedRT.dll` beside them - delete it or the output dir, or they measure the old runtime
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps
@@ -58,6 +61,7 @@
 - Import variables vs functions: different relocation types (GLOB_DAT vs PLT)
 - `#u16` literals must be interned as 16-bit units for alignment
 - Aggregate ABI: System V classifies per eightbyte, Win64 by total size
+- Frame bitmap records are written by both backends and read by the collector; only `system/tests/source/units/stack-bitmap-test.reds` (Red/System suite) covers the record itself
 
 ### macOS/Darwin
 - `Face-handle!` is `int64!` on ARM64, `integer!` on x86-64

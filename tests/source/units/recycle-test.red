@@ -186,15 +186,13 @@ Red [
 		recycle
 		
 		rb12-mem2: stats
-		;-- A bound rather than the strict decrease: those loops leave a dead
-		;-- node-handle! in a declared slot of this program's own frame, and a handle
-		;-- is a bare registry index, which no runtime test can tell apart from a live
-		;-- reference (runtime/collector.reds, mark-stack-handle). So which series stay
-		;-- pinned is frame-layout luck -- measured here on Linux-ARM64 as one 16-byte
-		;-- unit-1 series, 60 bytes of `stats`, and 0 on x64 and in a called function.
-		;-- What the test owns is that the 100000 x 16-byte copies come back: 1.6 MB,
-		;-- so a 4 KB tolerance still fails it by three orders of magnitude.
-		--assert rb12-mem2 - rb12-mem < 4096
+		;-- The upstream strict decrease, restored. It needs the collector to reject a
+		;-- stack word that is not the registry index entire: the low half of a 64-bit
+		;-- address can land inside (0, node-registry/next), and the cycle that rooted
+		;-- whoever owned that index pinned one 16-byte series here -- 60 bytes of
+		;-- residue on Linux-ARM64, which is why e387986c7 had to bound it instead
+		;-- (runtime/collector.reds, mark-stack-handle).
+		--assert rb12-mem2 <= rb12-mem
 		
 	--test-- "Recycle-block-13"
 		rb13-mem: none

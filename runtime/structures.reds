@@ -169,13 +169,19 @@ red-symbol!: alias struct! [
 ;-- Live hash table header. The collector validates one of these before it
 ;-- deep-marks the table, so the alias is shared rather than private to
 ;-- _hashtable: the collector must read the fields, not guess the offsets.
+;-- The arrays are held by node handle, not by physical node pointer: a handle
+;-- stays current when the collector moves what it refers to, so marking a table
+;-- reads these five words instead of rewriting them, and a frame that outlives
+;-- an allocation can keep one. `stride` is the cell count of a node-key table's
+;-- entries; hash!/map! leave it zero and use `indexes` as an array instead.
 hashtable!: alias struct! [
 	size		[integer!]
-	indexes		[node!]
-	chains		[node!]
-	flags		[node!]
-	keys		[node!]
-	blk			[node!]
+	indexes		[node-handle!]
+	chains		[node-handle!]
+	flags		[node-handle!]
+	keys		[node-handle!]
+	blk			[node-handle!]
+	stride		[integer!]
 	n-occupied	[integer!]
 	n-buckets	[integer!]
 	upper-bound	[integer!]

@@ -229,7 +229,7 @@ redbin: context [
 	
 	reference: context [
 		;-- a map of node! -> offset in 'list'
-		map:  as int-ptr! 0							;-- physical node pointer, registered by address
+		map:  0											;-- node handle for the table
 		list: as int-ptr! 0								;-- as well
 		top:  list
 		end:  list
@@ -241,7 +241,7 @@ redbin: context [
 				here [int-ptr!]
 				slot [red-integer!]
 		][
-			slot: as red-integer! _hashtable/get-value as node! map node-handle-of node
+			slot: as red-integer! _hashtable/get-value resolve-node map node-handle-of node
 			if null? slot [return null]
 			list + slot/value
 		]
@@ -266,8 +266,8 @@ redbin: context [
 				end: new + (newsz / size? integer!)
 				list: new
 			]
-			assert not null? map
-			slot: as red-integer! _hashtable/put-key as node! map node-handle-of node
+			assert map <> 0
+			slot: as red-integer! _hashtable/put-key resolve-node map node-handle-of node
 			assert not null? slot
 			integer/make-at as cell! slot (as-integer top - list) / size? integer!
 			top/1: size
@@ -275,7 +275,7 @@ redbin: context [
 			top: top + size + 1
 		]
 
-		on-gc-mark: does [_hashtable/mark :map]
+		on-gc-mark: does [_hashtable/mark map]
 		
 		reset: func [/local min-size] [
 			min-size: 16'384
@@ -288,11 +288,11 @@ redbin: context [
 				end: list + min-size
 			]
 			top: list
-			either null? map [
-				map: as int-ptr! _hashtable/init 1024 null HASH_TABLE_NODE_KEY 1
+			either zero? map [
+				map: node-handle-of _hashtable/init 1024 null HASH_TABLE_NODE_KEY 1
 				collector/register as int-ptr! :on-gc-mark
 			][
-				_hashtable/clear-map as node! map
+				_hashtable/clear-map resolve-node map
 			]
 		]
 	]

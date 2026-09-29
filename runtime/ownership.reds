@@ -13,7 +13,7 @@ Red/System [
 ownership: context [
 
 	size:	1000
-	table:	as node! 0
+	table:	0										;-- node handle: survives node moves
 
 	unbind: func [
 		value [red-value!]
@@ -24,6 +24,7 @@ ownership: context [
 			ctx	   [red-context!]
 			bits   [red-bitset!]
 			node   [node-handle!]
+			t	   [node!]
 			type   [integer!]
 			s	   [series!]
 	][
@@ -57,10 +58,11 @@ ownership: context [
 					s: GET_BUFFER(series)
 					s/flags: s/flags and not flag-series-owned
 				]
-				value: _hashtable/get-value table node
+				t: resolve-node table
+				value: _hashtable/get-value t node
 				unless null? value [
 					loop 3 [value/header: TYPE_UNSET  value: value + 1] ;-- clear all related slots
-					_hashtable/delete-key table node
+					_hashtable/delete-key t node
 
 					if ANY_BLOCK?(type) [
 						value: s/offset + series/head
@@ -78,10 +80,11 @@ ownership: context [
 				node: bits/node
 				s: GET_BUFFER(bits)
 				s/flags: s/flags and not flag-series-owned
-				value: _hashtable/get-value table node
+				t: resolve-node table
+				value: _hashtable/get-value t node
 				unless null? value [
 					loop 3 [value/header: TYPE_UNSET  value: value + 1] ;-- clear all related slots
-					_hashtable/delete-key table node
+					_hashtable/delete-key t node
 				]
 			]
 			true [0]
@@ -140,7 +143,7 @@ ownership: context [
 				]
 
 				if put? [								;-- process series if not already owned
-					slot: _hashtable/put-key table series/node
+					slot: _hashtable/put-key resolve-node table series/node
 					copy-cell container slot
 					copy-cell as red-value! owner slot + 1
 					copy-cell as red-value! word  slot + 2
@@ -164,7 +167,7 @@ ownership: context [
 				s: GET_BUFFER(bits)
 				if s/flags and flag-series-owned = 0 [
 					s/flags: s/flags or flag-series-owned
-					slot: _hashtable/put-key table bits/node
+					slot: _hashtable/put-key resolve-node table bits/node
 					copy-cell container slot
 					copy-cell as red-value! owner slot + 1
 					copy-cell as red-value! word  slot + 2
@@ -222,7 +225,7 @@ ownership: context [
 		/local
 			slot [red-value!]
 	][
-		slot: _hashtable/get-value table node
+		slot: _hashtable/get-value resolve-node table node
 		if null? slot [return null]
 		as red-object! slot + 1
 	]
@@ -261,7 +264,7 @@ ownership: context [
 			]
 			true [assert false]
 		]
-		slot: _hashtable/get-value table node
+		slot: _hashtable/get-value resolve-node table node
 		
 		either null? slot [false][
 			owner:  as red-object! slot + 1
@@ -273,6 +276,6 @@ ownership: context [
 	]
 	
 	init: does [
-		table: _hashtable/init size null HASH_TABLE_OWNERSHIP 3
+		table: node-handle-of _hashtable/init size null HASH_TABLE_OWNERSHIP 3
 	]
 ]

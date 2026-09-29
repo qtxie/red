@@ -54,6 +54,8 @@
 - A handle sharing a slot's high half (member at offset 4) is not bitmap-visible, and the probe now rejects it - only naming the slot in the handle bitmap roots it
 - Probe candidates must fill their whole word (a 64-bit address's low half can land inside the registry span); `stats/probe-alias` counts the rejections
 - Dev-mode unit binaries run `libRedRT.dll` beside them - delete it or the output dir, or they measure the old runtime
+- `hashtable!` names its five buffers by `node-handle!`: marking a table reads the header and never rewrites it (`collector/keep-handle` takes a handle, `keep` the slot holding one)
+- `hashtable!/stride` is CELLS per node-key entry; `put-key`'s `alloc-tail-unit` wants bytes - redbin-codec/money/reactivity only catch a wrong size, and only at `RED_GC_STRESS=500`
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps

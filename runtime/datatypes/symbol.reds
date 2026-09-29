@@ -12,7 +12,7 @@ Red/System [
 
 symbol: context [
 	verbose: 0
-	table: as node! 0
+	table: 0											;-- node handle: survives node moves
 	
 	is-any-type?: func [
 		word	[red-word!]
@@ -49,25 +49,34 @@ symbol: context [
 		s 		[byte-ptr!]
 		len		[integer!]
 		return:	[integer!]
+		/local
+			t	[node!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "symbol/make-alt-utf8"]]
-		_hashtable/put-symbol table s len no
+		t: resolve-node table
+		_hashtable/put-symbol t s len no
 	]
 
 	make: func [
 		s 		[c-string!]								;-- input c-string!
 		return:	[integer!]
+		/local
+			t	[node!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "symbol/make"]]
-		_hashtable/put-symbol table as byte-ptr! s system/words/length? s no
+		t: resolve-node table
+		_hashtable/put-symbol t as byte-ptr! s system/words/length? s no
 	]
 
 	make-opt: func [
 		s		[c-string!]
 		return: [integer!]
+		/local
+			t	[node!]
 	][
 		#if debug? = yes [if verbose > 0 [print-line "symbol/make-opt"]]
-		_hashtable/put-symbol table as byte-ptr! s system/words/length? s yes
+		t: resolve-node table
+		_hashtable/put-symbol t as byte-ptr! s system/words/length? s yes
 	]
 	
 	get: func [

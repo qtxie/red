@@ -670,8 +670,11 @@ collector: context [
 		new?
 	]
 
-	keep: func [
-		ptr		[int-ptr!]
+	;-- Mark the series a node handle names. The slot form below is the same test
+	;-- through the word holding the handle; a root that is a plain value, like the
+	;-- table header _hashtable/mark is handed, needs no slot to be marked.
+	keep-handle: func [
+		handle	[node-handle!]
 		return: [logic!]								;-- TRUE if newly marked, FALSE if already done
 		/local
 			node  [node!]
@@ -679,8 +682,8 @@ collector: context [
 			new?  [logic!]
 			flags [integer!]
 	][
-		if zero? ptr/value [return no]
-		node: resolve-node ptr/value
+		if zero? handle [return no]
+		node: resolve-node handle
 		if any [null? node null? node/value][return no]
 		s: as series! node/value
 		flags: s/flags
@@ -689,11 +692,21 @@ collector: context [
 		new?
 	]
 
+	keep: func [
+		ptr		[int-ptr!]
+		return: [logic!]								;-- TRUE if newly marked, FALSE if already done
+	][
+		keep-handle ptr/value
+	]
+
 
 	;-- Deep-mark a unit-1 series only when every field of hashtable! is
-	;-- consistent with a live table. Must be strict: a false positive would
-	;-- let _hashtable/mark rewrite random buffer words via keep-raw while
-	;-- do-node-cycle's refs map is active (silent memory corruption).
+	;-- consistent with a live table. Must be strict: a false positive marks
+	;-- live-looking buffers that nothing owns. Since hashtable! names its arrays
+	;-- by handle, consistency is now a registry question -- a field that is
+	;-- neither zero nor a live buffer rejects the candidate -- where it used to
+	;-- ask the frame lists whether a raw pointer still looked like a node,
+	;-- which a freed-but-untouched buffer would answer yes to.
 	mark-hashtable-node: func [
 		node [node!]
 		/local
@@ -701,14 +714,13 @@ collector: context [
 			h    [hashtable!]
 			kn fn bn [node!]
 			type n-buckets n-occupied upper [integer!]
-			keys flags blk [int-ptr!]
-			raw  [int-ptr!]
+			p e  [int-ptr!]
 	][
 		if any [null? node null? node/value][exit]
 		s: as series! node/value
 		if GET_UNIT(s) <> 1 [exit]
 		if s/flags and series-in-use = 0 [exit]
-		if (as-integer s/tail - s/offset) < 40 [exit]
+		if (as-integer s/tail - s/offset) < size? hashtable! [exit]
 		;-- table series must own a stable handle that points back here
 		if any [s/node < 1 s/node >= node-registry/next][exit]
 		kn: resolve-node s/node
@@ -719,9 +731,6 @@ collector: context [
 		n-buckets: h/n-buckets
 		n-occupied: h/n-occupied
 		upper: h/upper-bound
-		keys: as int-ptr! h/keys
-		flags: as int-ptr! h/flags
-		blk: as int-ptr! h/blk
 		if any [
 			type < HASH_TABLE_HASH
 			type > HASH_TABLE_OWNERSHIP
@@ -732,15 +741,27 @@ collector: context [
 			n-occupied > n-buckets
 			upper <= 0
 			upper > n-buckets
-			null? keys
-			null? flags
+			h/keys = 0						;-- every type has both of these
+			h/flags = 0
 		][exit]
-		unless frames-list/find keys FRAME_NODES [exit]
-		unless frames-list/find flags FRAME_NODES [exit]
-		if all [not null? blk not frames-list/find blk FRAME_NODES][exit]
 
-		kn: as node! keys
-		if any [null? kn null? kn/value][exit]
+		;-- indexes, chains, flags, keys, blk: the five handle fields, consecutive
+		;-- in the header. A type that does not use one leaves it zero, so a zero
+		;-- here is legal and anything else must name a live buffer. That covers
+		;-- the table _hashtable/init is still building: it writes the header words
+		;-- one allocation at a time, and a collection fired by a later one can find
+		;-- and probe it, so a half-built table must be rejected, not marked.
+		p: :h/indexes
+		e: p + 5
+		while [p < e][
+			if p/value <> 0 [
+				kn: resolve-node p/value
+				if any [null? kn null? kn/value][exit]
+			]
+			p: p + 1
+		]
+
+		kn: resolve-node h/keys
 		sk: as series! kn/value
 		;-- keys is built by _alloc-bytes, so it is a unit-1 buffer of
 		;-- n-buckets * size? int-ptr! bytes that the table indexes as
@@ -750,17 +771,15 @@ collector: context [
 			sk/size < (n-buckets * size? int-ptr!)
 		][exit]
 
-		fn: as node! flags
-		if any [null? fn null? fn/value][exit]
+		fn: resolve-node h/flags
 		sf: as series! fn/value
 		if any [
 			GET_UNIT(sf) <> 1							;-- flag bytes
 			sf/size < (n-buckets >> 2)
 		][exit]
 
-		if not null? blk [
-			bn: as node! blk
-			if any [null? bn null? bn/value][exit]
+		if h/blk <> 0 [
+			bn: resolve-node h/blk
 			sb: as series! bn/value
 			if all [
 				type > 0									;-- maps/hashes store cells
@@ -769,8 +788,7 @@ collector: context [
 			][exit]
 		]
 
-		raw: as int-ptr! node
-		_hashtable/mark :raw
+		_hashtable/mark s/node
 	]
 
 	;-- Mark a node-handle! found in one native stack slot: unit-16 cell series
@@ -902,7 +920,6 @@ collector: context [
 	mark-context: func [
 		ptr		[int-ptr!]
 		/local
-			node [int-ptr!]
 			ctx  [red-context!]
 			slot [red-value!]
 			s	 [series!]
@@ -920,10 +937,7 @@ collector: context [
 		s/flags: s/flags or flag-gc-scan				;-- set before nested (cycle break)
 		ctx: TO_CTX(ptr/value)							;-- [context! function!|object!]
 		slot: as red-value! ctx
-		node: as int-ptr! resolve-node ctx/symbols
-		if node <> null [
-			_hashtable/mark :node
-		]
+		_hashtable/mark ctx/symbols
 		unless ON_STACK?(ctx) [mark-block-node :ctx/values]
 		mark-values slot + 1 slot + 2				;-- mark the back-reference value (2nd value)
 	]
@@ -951,7 +965,6 @@ collector: context [
 			ctx		[red-context!]
 			img		[red-image!]
 			h		[red-handle!]
-			node	[int-ptr!]
 			len		[integer!]
 			type	[integer!]
 			evt		[red-event!]
@@ -1019,10 +1032,7 @@ collector: context [
 					#if debug? = yes [if verbose > 1 [print "context"]]
 					ctx: as red-context! value
 					;keep :ctx/self
-					node: as int-ptr! resolve-node ctx/symbols
-					if node <> null [
-						_hashtable/mark :node
-					]
+					_hashtable/mark ctx/symbols
 					unless ON_STACK?(ctx) [mark-block-node :ctx/values]
 				]
 				TYPE_HASH
@@ -1030,10 +1040,7 @@ collector: context [
 					#if debug? = yes [if verbose > 1 [print "hash/map"]]
 					hash: as red-hash! value
 					mark-block-node :hash/node
-					node: as int-ptr! resolve-node hash/table
-					if node <> null [
-						_hashtable/mark :node		;@@ check if previously marked
-					]
+					_hashtable/mark hash/table		;@@ check if previously marked
 				]
 				TYPE_FUNCTION
 				TYPE_ROUTINE [
@@ -1099,21 +1106,6 @@ collector: context [
 		mark-values s/offset s/tail
 	]
 
-	mark-block-raw: func [
-		ptr	[ptr-ptr!]
-		/local
-			node [node!]
-			s	 [series!]
-	][
-		if null? ptr/value [exit]
-		keep-raw ptr
-		node: as node! ptr/value
-		s: as series! node/value
-		if s/flags and flag-gc-scan <> 0 [exit]
-		s/flags: s/flags or flag-gc-scan
-		mark-values s/offset s/tail
-	]
-	
 	mark-block: func [
 		blk [red-block!]
 	][
@@ -2123,7 +2115,6 @@ collector: context [
 
 	do-mark-sweep: func [
 			/local
-				p		[int-ptr!]
 				global-node [node-handle!]
 				marker	[ptr-ptr!]
 				timed?	[logic!]
@@ -2168,10 +2159,12 @@ collector: context [
 			if verbose > 1 [probe "^/marking..."]
 		]
 
-		;-- Node-frame compaction relocates raw node* inside hashtable tables.
-		;-- Live tables must be deep-marked via _hashtable/mark so keep-raw
-		;-- rewrites keys/flags/blk after moves. X64/ARM64 skip this pass
-		;-- (rs-* relocation map still 32-bit keyed).
+		;-- Compaction relocates node records and records where each went in
+		;-- `refs`, so the raw pointers this pass still finds can be rewritten.
+		;-- hashtable! names every array it owns by a handle now, so marking a
+		;-- table reads its header and never rewrites it -- including the two
+		;-- roots below, which hold handles rather than the nodes they named.
+		;-- X64/ARM64 skip this pass (rs-* relocation map still 32-bit keyed).
 		#either any [target = 'X86-64 target = 'ARM64] [
 			0
 		][
@@ -2186,13 +2179,9 @@ collector: context [
 
 		mark-block root
 		#if debug? = yes [if verbose > 1 [probe "marking symbol table"]]
-		p: as int-ptr! symbol/table
-		_hashtable/mark :p			;-- will mark symbols
-		symbol/table: as node! p
+		_hashtable/mark symbol/table			;-- will mark symbols
 		#if debug? = yes [if verbose > 1 [probe "marking ownership table"]]
-		p: as int-ptr! ownership/table
-		_hashtable/mark :p
-		ownership/table: as node! p
+		_hashtable/mark ownership/table
 
 		#if debug? = yes [if verbose > 1 [probe "marking stack"]]
 		keep :arg-stk/node
@@ -2226,7 +2215,7 @@ collector: context [
 
 		#if debug? = yes [if verbose > 1 [probe "sweeping..."]]
 		externals/sweep
-		_hashtable/sweep ownership/table
+		_hashtable/sweep resolve-node ownership/table
 		collect-series-frames COLLECTOR_RELEASE
 		collect-big-frames
 		nodes-list/flush

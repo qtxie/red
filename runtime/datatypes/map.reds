@@ -757,8 +757,8 @@ map: context [
 		#if debug? = yes [if verbose > 0 [print-line "map/copy"]]
 
 		new: as red-hash! block/clone as red-block! map deep? yes
-		new/table:  map/table	;-- set it to old table, _hashtable/copy below may trigger GC
-		new/table:  node-handle-of _hashtable/copy resolve-node map/table resolve-node new/node
+		new/table:  map/table	;-- keep the old table rooted while the copy allocates
+		new/table:  _hashtable/copy map/table new/node
 		new/header: TYPE_MAP
 		new
 	]

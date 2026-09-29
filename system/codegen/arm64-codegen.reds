@@ -349,23 +349,34 @@ arm64-codegen: context [
 		left = right
 	]
 
-	canonical-type: func [
+	;-- Follow alias records to the type they name, without the machine fold
+	;-- below. canonical-type turns a node-handle! into an integer! on purpose,
+	;-- and the frame bitmap is the one reader that must tell them apart.
+	resolved-ref: func [
 		ref [integer!]
 		view [rsir-view!]
 		return: [integer!]
 		/local type [rsir-type!] steps [integer!]
 	][
-		if ref < 0 [return scalar-ref ref]
+		if ref < 0 [return ref]
 		steps: 0
 		while [steps < view/header/type-count][
 			if any [ref <= 0 ref > view/header/type-count][return 0]
 			type: as rsir-type! (view/types + ((ref - 1) * RSIR_TYPE_SIZE))
 			unless type/kind = -1 [return ref]
 			ref: type/target
-			if ref < 0 [return scalar-ref ref]
+			if ref < 0 [return ref]
 			steps: steps + 1
 		]
 		0
+	]
+
+	canonical-type: func [
+		ref [integer!]
+		view [rsir-view!]
+		return: [integer!]
+	][
+		scalar-ref (resolved-ref ref view)
 	]
 
 	type-kind: func [
@@ -4107,8 +4118,10 @@ arm64-codegen: context [
 	]
 
 	;-- True when a value of this type may reference memory the collector can
-	;-- move: the same test mark-bitmap-type applies slot by slot, so a shadow
-	;-- slot reserved here is exactly the slot the bitmap walk marks.
+	;-- move, and so has to be parked in a frame slot across a call: the shadow
+	;-- slot reserved here is a slot the bitmap walk marks. The converse does not
+	;-- hold -- the bitmap also names handle slots, and a handle is stable under
+	;-- compaction, so it never needs a slot of its own to survive a call.
 	bitmap-marked-type?: func [
 		ref [integer!] inline? [logic!] view [rsir-view!]
 		return: [logic!]
@@ -4146,6 +4159,16 @@ arm64-codegen: context [
 			member [rsir-member!] offsets [int-ptr!]
 	][
 		if depth > view/header/type-count [return false]
+		;-- A node handle is not an address the collector can move, so it belongs
+		;-- to the record's handle stream rather than to the pointer one below.
+		;-- Only a slot wholly occupied by one can be named: the collector reads a
+		;-- handle from the low half of the eight-byte slot, so a member sharing
+		;-- the high half stays unmarked -- which is exactly what the stack probe
+		;-- could never see either, until the handle bitmap replaces it.
+		if (resolved-ref ref view) = -17 [
+			if (displacement // 8) <> 0 [return true]
+			return stack-bitmap/mark-handle record (((0 - displacement) / 8) - 5)
+		]
 		ref: canonical-type ref view
 		kind: type-kind ref view
 		if all [inline? any [kind = -2 kind = -3 kind = -7]][
@@ -4180,13 +4203,17 @@ arm64-codegen: context [
 		record [int-ptr!] view [rsir-view!] layout [arm64-layout-state!]
 		fn [rsir-function!] scratch [arm64-function-scratch!] plan [arm64-function-plan!]
 		return: [logic!]
-		/local index [integer!] parameter [rsir-parameter!]
+		/local index [integer!] slot [integer!] parameter [rsir-parameter!]
 	][
 		stack-bitmap/initialize record plan/bitmap-slots
-		; Saved GPRs belong to the caller, whose types are unknown here.
+		; Saved GPRs belong to the caller, whose types are unknown here, so they
+		; are named in both streams: the collector may chase one as a pointer or
+		; root it as a handle, whichever the caller happened to be holding.
 		index: 1
 		while [index <= plan/home-count][
-			unless stack-bitmap/mark record (plan/frame-prefix-count + index - 5) [return false]
+			slot: plan/frame-prefix-count + index - 5
+			unless stack-bitmap/mark record slot [return false]
+			unless stack-bitmap/mark-handle record slot [return false]
 			index: index + 1
 		]
 		index: 1

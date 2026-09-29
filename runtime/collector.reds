@@ -43,6 +43,8 @@ collector: context [
 		stack-slots  [integer!]							;-- conservative stack words examined
 		stack-roots  [integer!]							;-- stack words that rooted a series
 		queue-peak	 [integer!]							;-- widest marking queue, in cell ranges
+		handle-bits	 [integer!]							;-- declared slots the handle bitmap named
+		probe-roots  [integer!]							;-- handles the range probe rooted that it did not
 	]
 	
 	ext-size: 100
@@ -167,6 +169,8 @@ collector: context [
 		stats/moved-bytes:		0
 		stats/stack-slots:		0
 		stats/stack-roots:		0
+		stats/handle-bits:		0
+		stats/probe-roots:		0
 		prefs/nodes-gc-trigger: 5						;-- trigger if node frame is unchanged after 5 cycles
 		stress?: read-stress-env :stress-period
 		stats?:  read-stats-env
@@ -747,11 +751,13 @@ collector: context [
 		_hashtable/mark :raw
 	]
 
-	;-- Mark a node-handle! found on the native stack. Handles are integer! and
-	;-- never appear in the pointer bitmap, so the bitmap walk probes the slots no
-	;-- pointer bit covers for one: unit-16 cell series deep-mark via
-	;-- mark-block-node, unit-1 is shallow-kept, and validated hashtables are
-	;-- deep-marked so nested keys/flags/blk stay live across GC.
+	;-- Mark a node-handle! found in one native stack slot: unit-16 cell series
+	;-- deep-mark via mark-block-node, unit-1 is shallow-kept, and validated
+	;-- hashtables are deep-marked so nested keys/flags/blk stay live across GC.
+	;-- The slot arrives either because the frame's handle bitmap names it, or
+	;-- because the range probe below guessed it might. Both tests are the same
+	;-- one until the bitmap proves it misses nothing: `named?` only records who
+	;-- asked, so stats/probe-roots counts the guesses the bitmap did not cover.
 	;-- The probe is a range test -- the registry takes any handle in (0, next) --
 	;-- and a node-handle! is a bare index, so an unrelated small integer cannot be
 	;-- told apart from a reference: a symbol id in a dead slot roots the series that
@@ -762,6 +768,7 @@ collector: context [
 	;-- shape and still probes the whole body.
 	mark-stack-handle: func [
 		sp [ptr-ptr!]
+		named? [logic!]									;-- yes when the handle bitmap asked
 		/local
 			handle [integer!]
 			entry [ptr-ptr!]
@@ -770,6 +777,7 @@ collector: context [
 	][
 		handle: as integer! sp/value
 		if all [handle > 0 handle < node-registry/next][
+			unless named? [stats/probe-roots: stats/probe-roots + 1]
 			entry: node-registry/entries + (handle - 1)
 			if entry/value <> null [
 				node: as node! entry/value
@@ -1564,13 +1572,14 @@ collector: context [
 		/local
 			frm slot sp prev [ptr-ptr!]
 			sp-address [byte-ptr!]
-			map p b base base' head [int-ptr!]
+			map p b base base' head hword [int-ptr!]
 			refs tail new entry [ptr-ptr!]
 			node [node!]
 			c-low c-high lib-low lib-high caller [byte-ptr!]
 			s [series!]
 			bits slot-bits idx disp nb arg-slots local-slots slots handle h n [integer!]
-			ext? dyn? in-lib? [logic!]
+			hw hbits [integer!]
+			ext? dyn? in-lib? named? [logic!]
 	][
 		c-low: system/image/base + system/image/code
 		c-high: c-low + system/image/code-size
@@ -1640,6 +1649,17 @@ collector: context [
 					local-slots: 0
 				]
 				head: map								;-- saved head reference for later args bitmap detection
+				;-- The record's shape belongs to system/codegen/stack-bitmap.reds:
+				;-- two count words, one empty argument word, then the pointer
+				;-- stream, then a handle stream over the same slots and just as
+				;-- long. So the handle word paired with the pointer word under read
+				;-- is exactly `hw` words below it, and the walk needs no other
+				;-- knowledge of where the second stream starts.
+				#either any [target = 'X86-64 target = 'ARM64] [
+					hw: either local-slots = 0 [1][1 + ((local-slots - 1) / 31)]
+				][
+					hw: 0
+				]
 				#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [idx: -1][idx: 2] ;-- arguments index
 				disp: 1									;-- scanning direction
 				loop 2 [									;-- 1st loop: args, 2nd loop: locals
@@ -1665,6 +1685,16 @@ collector: context [
 						;-- bitmaps, so later pointer/handle slots are scanned at the
 						;-- wrong stack addresses. That drops live series* from
 						;-- stk-refs and fails to mark live handles under GC pressure.
+						;-- The handle word covering these same slots: arguments travel
+						;-- through the caller's outgoing area, which no record
+						;-- describes, so only the locals stream has one to read.
+						hbits: 0
+						#if any [target = 'X86-64 target = 'ARM64] [
+							if disp = -1 [
+								hword: map + hw
+								hbits: hword/value
+							]
+						]
 						n: 0
 						#either any [target = 'X86-64 target = 'ARM64 target = 'IA-32] [
 							while [all [n < 31 (idx + 1) < slots]][
@@ -1679,12 +1709,18 @@ collector: context [
 										(as byte-ptr! frm) - ((5 + idx) * size? pointer!)
 									]]
 									sp: as ptr-ptr! sp-address
-									mark-stack-handle sp
+									;-- The bitmap owns the answer where it has one; the probe still
+									;-- speaks for the slots it does not name. stats/probe-roots counts
+									;-- how often it is the one that knows, which is the day it may stop.
+									named?: hbits and 1 <> 0
+									if named? [stats/handle-bits: stats/handle-bits + 1]
+									mark-stack-handle sp named?
+									hbits: hbits >>> 1
 								][
 									#if target = 'IA-32 [
 										;-- args: [ebp+8]=frm+2; locals: [ebp-20]=frm-5
 										sp: either disp = 1 [frm + 2 + idx][frm - 5 - idx]
-										mark-stack-handle sp
+										mark-stack-handle sp no
 									]
 								]
 								if bits and 1 <> 0 [	;-- check if the slot is a pointer
@@ -1847,14 +1883,14 @@ collector: context [
 					][prev][as ptr-ptr! system/stack/top]
 					while [sp > slot][
 						sp: sp - 1
-						mark-stack-handle sp
+						mark-stack-handle sp no
 					]
 					sp: frm + 1
 					idx: 0
 					while [all [idx < 64 sp < as ptr-ptr! stk-bottom]][
 						sp: sp + 1
 						idx: idx + 1
-						mark-stack-handle sp
+						mark-stack-handle sp no
 					]
 				]
 			]
@@ -1989,6 +2025,7 @@ collector: context [
 		print-line ["  moved bytes   : " stats/moved-bytes]
 		print-line ["  stack slots   : " stats/stack-slots]
 		print-line ["  stack roots   : " stats/stack-roots]
+		print-line ["  handle slots  : " stats/handle-bits " bitmap-named, " stats/probe-roots " probed"]
 		print-line ["  mark queue    : " stats/queue-peak " ranges peak / " mark-queue/size " allocated"]
 		print-line ["  pinned (last) : " stats/pinned-frames " frames / " stats/pinned-bytes " bytes"]
 		free as byte-ptr! buf

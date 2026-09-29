@@ -18,6 +18,7 @@
 
 ## Current Baselines
 
+- **hybrid-compiler282.exe** (281->282, 6549504 bytes, fixed point): the frame bitmap carries a handle stream beside the pointer one
 - **hybrid-compiler279.exe** (278->279, 6532608 bytes, fixed point): node-handle! is a typed RSIR scalar, folded to integer! by both backends
 - **hybrid-compiler265.exe** (264->265, 6523904 bytes, fixed point at 266): ARM64 deep expression stack support
 - Compare generated output, not compiler image (build date shifts addresses)
@@ -48,6 +49,8 @@
 - Conservative stack scanning: gap words cannot root series, only declared locals
 - `RED_GC_STRESS=N` forces collection every N allocations for testing
 - Dev mode bitmap selection: check if return address is in runtime image
+- Frame bitmaps are two streams over one slot numbering: pointers, then node-handle! flags
+- A handle sharing a slot's high half (member at offset 4) is not bitmap-visible - only the probe sees it
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps

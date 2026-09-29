@@ -514,23 +514,34 @@ x64-codegen: context [
 		left = right
 	]
 
-	canonical-type: func [
+	;-- Follow alias records to the type they name, without the machine fold
+	;-- below. canonical-type turns a node-handle! into an integer! on purpose,
+	;-- and the frame bitmap is the one reader that must tell them apart.
+	resolved-ref: func [
 		ref [integer!]
 		table [type-table!]
 		return: [integer!]
 		/local record [rsir-type!] steps [integer!]
 	][
-		if ref < 0 [return scalar-ref ref]
+		if ref < 0 [return ref]
 		steps: 0
 		while [steps < table/type-count][
 			if any [ref <= 0 ref > table/type-count][return 0]
 			record: as rsir-type! (table/types + ((ref - 1) * RSIR_TYPE_SIZE))
 			unless record/kind = -1 [return ref]
 			ref: record/target
-			if ref < 0 [return scalar-ref ref]
+			if ref < 0 [return ref]
 			steps: steps + 1
 		]
 		0
+	]
+
+	canonical-type: func [
+		ref [integer!]
+		table [type-table!]
+		return: [integer!]
+	][
+		scalar-ref (resolved-ref ref table)
 	]
 
 	typed-runtime-id?: func [id [integer!] return: [logic!]][
@@ -2944,6 +2955,16 @@ x64-codegen: context [
 			member [rsir-member!] offsets [int-ptr!]
 	][
 		if depth > table/type-count [return false]
+		;-- A node handle is not an address the collector can move, so it belongs
+		;-- to the record's handle stream rather than to the pointer one below.
+		;-- Only a slot wholly occupied by one can be named: the collector reads a
+		;-- handle from the low half of the eight-byte slot, so a member sharing
+		;-- the high half stays unmarked -- which is exactly what the stack probe
+		;-- could never see either, until the handle bitmap replaces it.
+		if (resolved-ref ref table) = -17 [
+			if (displacement // 8) <> 0 [return true]
+			return stack-bitmap/mark-handle record (((0 - displacement) / 8) - 5)
+		]
 		ref: canonical-type ref table
 		kind: logical-kind ref table
 		if all [inline? any [kind = -2 kind = -3 kind = -7]][

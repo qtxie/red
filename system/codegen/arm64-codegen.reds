@@ -5606,6 +5606,72 @@ arm64-codegen: context [
 		written + encoded
 	]
 
+	;-- Integer division for the deep expression stack, where the operands
+	;-- already occupy the two scratch registers and a quotient, a remainder
+	;-- and a divisor are three live values. The quotient rides X8, the one
+	;-- register no expression at that depth keeps a value in: the temps
+	;-- start at X9, the homes at X19, and X16/X17 are the operands'.
+	;-- A signed floored modulo keeps its result there too, because the
+	;-- correction needs the divisor alive to add it back.
+	emit-deep-division: func [
+		code [byte-ptr!]
+		capacity left right width [integer!]
+		signed? modulo? [logic!]
+		return: [integer!]
+		/local at [byte-ptr!]
+			written encoded result load-signed [integer!]
+	][
+		written: 0
+		result: either all [signed? modulo?][arm64-encoder/X8][right]
+		load-signed: either signed? [1][0]
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/divide-register at (capacity - written)
+			arm64-encoder/X8 left right width load-signed
+		if encoded < 0 [return fail-code encoded 909 "emit-deep-division/code#1"]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/multiply-subtract at (capacity - written)
+			result arm64-encoder/X8 right left width
+		if encoded < 0 [return fail-code encoded 910 "emit-deep-division/code#2"]
+		written: written + encoded
+		unless all [signed? modulo?][return written]
+		;-- DIV/MSUB truncate toward zero while Red's // floors, so a
+		;-- remainder of the opposite sign to the divisor gains one divisor.
+		;-- The same five instructions the register path uses, X16 being
+		;-- free again now that MSUB has consumed the dividend.
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/compare-immediate at (capacity - written)
+			right 0 width
+		if encoded < 0 [return fail-code encoded 911 "emit-deep-division/code#3"]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/conditional-negate at (capacity - written)
+			arm64-encoder/X16 right width arm64-encoder/MI
+		if encoded < 0 [return fail-code encoded 912 "emit-deep-division/code#4"]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/compare-immediate at (capacity - written)
+			arm64-encoder/X8 0 width
+		if encoded < 0 [return fail-code encoded 913 "emit-deep-division/code#5"]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/conditional-select at (capacity - written)
+			arm64-encoder/X16 arm64-encoder/X16 arm64-encoder/ZR
+			width arm64-encoder/MI
+		if encoded < 0 [return fail-code encoded 914 "emit-deep-division/code#6"]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/add-register at (capacity - written)
+			arm64-encoder/X8 arm64-encoder/X8 arm64-encoder/X16 width
+		if encoded < 0 [return fail-code encoded 915 "emit-deep-division/code#7"]
+		written: written + encoded
+		at: either null? code [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/move-register at (capacity - written)
+			right arm64-encoder/X8 width
+		if encoded < 0 [return fail-code encoded 916 "emit-deep-division/code#8"]
+		written + encoded
+	]
+
 	; Load an exact object chunk without reading beyond its physical size.
 	emit-aggregate-chunk-load: func [
 		code [byte-ptr!]
@@ -9588,25 +9654,67 @@ arm64-codegen: context [
 							depth: source-slot
 							scratch/stack-types/depth: -11
 						][
-							unless any [
-								operation = ADD_OPERATION
-								operation = SUBTRACT_OPERATION
-								operation = MULTIPLY_OPERATION
-							][return fail-unsupported 367 "compile-function/operation#201"]
+							;-- The same integer operations the register path
+							;-- emits, computed in the fixed scratch registers
+							;-- instead: each arm below leaves its result in the
+							;-- right operand's register, which is what the shared
+							;-- tail parks in the region slot.
 							at: either null? code [as byte-ptr! 0][code + written]
-							case [
+							encoded: case [
 								operation = ADD_OPERATION [
-									encoded: arm64-encoder/add-register at
+									arm64-encoder/add-register at
 										(capacity - written) right left right width
 								]
 								operation = SUBTRACT_OPERATION [
-									encoded: arm64-encoder/subtract-register at
+									arm64-encoder/subtract-register at
 										(capacity - written) right left right width
 								]
-								true [
-									encoded: arm64-encoder/multiply-register at
+								operation = MULTIPLY_OPERATION [
+									arm64-encoder/multiply-register at
 										(capacity - written) right left right width
 								]
+								all [operation >= OR_OPERATION operation <= AND_OPERATION][
+									condition: case [
+										operation = OR_OPERATION [arm64-encoder/OP_OR]
+										operation = XOR_OPERATION [arm64-encoder/OP_XOR]
+										true [arm64-encoder/OP_AND]
+									]
+									arm64-encoder/alu-register at (capacity - written)
+										condition right left right width false
+								]
+								all [
+									operation >= SHIFT_LEFT_OPERATION
+									operation <= SHIFT_LOGICAL_OPERATION
+								][
+									condition: case [
+										operation = SHIFT_LEFT_OPERATION [
+											arm64-encoder/SHIFT_LEFT
+										]
+										operation = SHIFT_RIGHT_OPERATION [
+											either signed-type? left-ref view [
+												arm64-encoder/SHIFT_ARITHMETIC
+											][arm64-encoder/SHIFT_RIGHT]
+										]
+										true [arm64-encoder/SHIFT_RIGHT]
+									]
+									arm64-encoder/shift-register at (capacity - written)
+										condition right left right width
+								]
+								operation = DIVIDE_OPERATION [
+									load-signed: either signed-type? left-ref view [1][0]
+									arm64-encoder/divide-register at (capacity - written)
+										right left right width load-signed
+								]
+								all [
+									operation >= REMAINDER_OPERATION
+									operation <= MODULO_OPERATION
+								][
+									emit-deep-division at (capacity - written)
+										left right width
+										either signed-type? left-ref view [true][false]
+										operation = MODULO_OPERATION
+								]
+								true [return fail-unsupported 367 "compile-function/operation#201"]
 							]
 							if encoded < 0 [return fail-code encoded 755 "compile-function/code#217"]
 							written: written + encoded

@@ -354,16 +354,25 @@ budget.
   241/242: both 6513664 bytes, `--list-targets` leads with `MSDOS-X86-64`, a
   default build prints four lines, and a Red/System build with
   `-t Windows-X86-64` carries sub-system 2.
-- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler264.exe`
+- Current baseline: `build/self-hosting/merge-red64/hybrid-compiler265.exe`
+  (264->265, output 6523904 bytes; 265 self-compiles to 266 at the same
+  6523904 bytes with 23, so the chain is at a fixed point). 265 carries the
+  **ARM64 deep expression stack** work: the deep-stack fallback knew only
+  ADD/SUBTRACT/MULTIPLY, so any integer operation past expression slot 7 --
+  an AND, a shift, a division -- died at site 367, which is why no ARM64
+  target could build a `-d` program at all (`dump-globals`, compiled in only
+  by `-d`, is deep). OR/XOR/AND, the three shifts, DIVIDE and REMAINDER/MODULO
+  are there now, the quotient riding X8. See "`-d` on ARM64: the deep
+  expression stack was missing eight integer operations" below.
+- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler264.exe`
   (263->264, output 6520832 bytes; the two differ in 25 bytes -- the PE
-  timestamp, checksum, output-name digit and the two build clocks -- and 264
-  self-compiles to 265 at the same 6520832 bytes with 19, so the chain is at a
-  fixed point). 264 carries the **Objective-C super call** fix: on
-  Darwin an objc message's trailing arguments started at x0, the receiver's own
-  register, so a drawn button cell reached AppKit with garbage and both the
-  View-smoke suite and every GUI-console exit crashed. See "An Objective-C
-  super call started its trailing arguments at x0" below.
-- Previous baseline: `build/self-hosting/merge-red64/hybrid-compiler227.exe`
+  timestamp, checksum, output-name digit and the two build clocks). 264 carries
+  the **Objective-C super call** fix: on Darwin an objc message's trailing
+  arguments started at x0, the receiver's own register, so a drawn button cell
+  reached AppKit with garbage and both the View-smoke suite and every
+  GUI-console exit crashed. See "An Objective-C super call started its trailing
+  arguments at x0" below.
+- Earlier baseline: `build/self-hosting/merge-red64/hybrid-compiler227.exe`
   (226->227, output 6450176 bytes). 227 carries the **ARM64 out-of-range
   frame load** fix: an ARM64-hosted toolchain could not compile *anything*
   for Linux-ARM64 or Darwin-ARM64 -- every build died with `emission
@@ -2790,6 +2799,24 @@ normal end, `quit`, uncaught error -- delivered their text both through `| cat` 
 a redirected file. Nothing is buffered away; a macOS `.app` started from a CI shell
 just has nowhere to put it, which is what the two files above are for.
 
+That last clause is narrower than it reads, and the correction is worth keeping because
+it changes which target to use for hardware work. **`-t Darwin-ARM64` opens a View
+window too** -- a `Needs: View` header is what asks for the GUI engine, exactly as
+`MSDOS-X86-64` does, and the target only decides the container. Measured on Apple
+silicon with the same source, one compile per spelling:
+
+| spelling | container | run |
+|---|---|---|
+| `-r -d -t Darwin-ARM64` | bare executable, no `.app`, no signature | all 15 stages, exit 0, **`MACOS-ARM64-VIEW-OK` on stdout, readable over ssh** |
+| `-r -d -t macOS-ARM64` | `Contents/MacOS/<name>` inside `<name>.app`, signed | all 15 stages, exit 0, stdout nowhere to be read, so the verdict travels in `.ok`/`.error`/`.stages` |
+
+So `macOS-ARM64` remains the only target that exercises the packager and `codesign`,
+which is why CI asks for it, but the *console* target is the faster path when the thing
+being asked is "does it run" -- there is no `foo.app.app` doubling, no quarantine
+attribute to strip and no silent-stdout trap. Line 14's "`macOS-ARM64` (the only target
+with the app packager)" is about the container and must not be read as "the GUI needs the
+bundle": `Needs: View` picks the GUI engine on any Darwin spelling.
+
 The Windows reading of the rewritten groups, being the only backend reachable here:
 exit 0, marker written, all 15 stages, the PNG encoded and deleted, and exactly one
 notice left --
@@ -2920,24 +2947,113 @@ true for all three consumers (`view`'s `center-face/with`, `face/parent:`, `unvi
 alone the suite also stops dying, but `unmatched=20` says the backend was still lost on
 every window after the first.
 
-### What `-d` still cannot do on ARM64, and why the driver changed
+### `-d` on ARM64: the deep expression stack was missing eight integer operations
 
-`tests/run-macos-arm64-view-tests.sh` compiled with `-r -d --show-func-map` while CI
-compiles `-r -t macOS-ARM64`. The `-d` spelling **cannot build at all** for an ARM64
-target, on any generation reachable here:
+Every ARM64 `-d` build died, on every generation reachable here -- `Red [] print "x"`
+included, because a `-d` Red program always compiles in `dump-globals`:
 
     *** codegen UNSUPPORTED: target feature is not implemented
         check: arm64-codegen.reds :: compile-function/operation#201 (site 367)
-        phase=measure function=1459 instruction=142 op=BINARY (15) operands=12,0,0
+        phase=measure function=1460 instruction=142 op=BINARY (15) operands=12,0,0
         function: red>dump-globals
         source: /E/temp3/red/runtime/debug-tools.reds:165
+    *** Compilation Error: native codegen does not support this RSIR yet   (exit 1)
 
-`dump-globals` is compiled in only by `-d`, and its pointer arithmetic lands in the
-register-plus-immediate arm, which accepts just ADD/SUBTRACT/MULTIPLY for that shape.
-So the script never ran end to end -- it died before its first `[ -f "$executable" ]`.
-It now uses CI's spelling, with a comment naming the gap. That gap is open, not
-fixed: no CI leg asks for `-d` on ARM64 (`windows.yml` is the only `-d` consumer, for
-`MSDOS-X86-64`), which is why a whole mode of the ARM64 backend has stayed untested.
+That diagnosis is re-measured at 264 against a two-line source and it stands; what the
+earlier note in this file *claimed* about the cause did not. It was not the
+register-plus-immediate arm. `operands=12,0,0` is `AND_OPERATION`, and `TYPE_OF(val)`
+at `debug-tools.reds:165` is an AND -- which no arm of the backend ever refused on a
+shallow operand. What refused it was **depth**: `dump-globals` keeps so many values live
+that its operands sit past expression-stack slot 7, and past slot 7 ARM64 has run out of
+value temps (X9-X15), so the expression falls to the deep-stack fallback, which the
+macOS-toolchain work had taught ADD, SUBTRACT and MULTIPLY and nothing else. Everything
+deeper than those three died at site 367. No CI leg asked for `-d` on ARM64, which is why
+a whole mode of the backend stayed untested and why the failure was blamed on the wrong
+arm.
+
+The fallback now carries the rest of the integer set, computed in the same fixed scratch
+registers the operands already occupy: OR/XOR/AND, the three shifts (arithmetic or
+logical following the operand's signedness, as the register path does), DIVIDE, and
+REMAINDER/MODULO. Each arm leaves its result in the *right* operand's register, which is
+what the shared tail parks into the region slot, so the tail did not change.
+
+Division needed a helper of its own (`emit-deep-division`) because a quotient, a
+remainder and a divisor are three live values with only two scratch registers free. The
+quotient rides **X8** -- the one register no expression at that depth keeps a value in:
+the temps start at X9, the homes at X19, and X16/X17 are the operands'. A signed floored
+modulo keeps its result in X8 too, since the correction adds the divisor back and so
+needs it alive; DIV/MSUB truncate toward zero, and the same five instructions the
+register path uses do the floor. Hence `%` and `//` still differ correctly at depth.
+
+A narrow operand (`byte!`, `char!`) is *not* re-extended from the 32-bit computation,
+and that is measured rather than assumed: the parked slot keeps the value's own type tag,
+so every later consumer materializes it at that tag's width and the truncation happens on
+read. Generation 264 and 265 answer all thirteen deep `byte!` cases identically, so the
+extension written first was an unobservable instruction and was removed.
+
+Verified, all of it with the current 265:
+
+| measurement | result |
+|---|---|
+| 264, `-r -d -t Darwin-ARM64` | refused at site 367, exit 1, nothing written |
+| 265, `-r -d` for Darwin-ARM64 / Linux-ARM64 / MSDOS-X86-64 | links: 2521112 / 2565268 / 2846208 bytes |
+| `d-hello` `-d` run on armbian | `d-hello` / `sum 3`, exit 0 |
+| `d-hello` `-d` run on Apple silicon | `d-hello` / `sum 3`, exit 0 |
+| 18 deep `integer!` cases on ARM64 hardware | identical to the x64 oracle, incl. `/ 3`, `% pos 2`, `% neg -4`, `// neg 1`, `>>> 536870911`, `nest 264` |
+| 13 deep `byte!` cases on ARM64 hardware | identical to the x64 oracle: `44 100 32 64 236 172 32 50 50 16 8 8 80` |
+| View smoke suite, `-r -d -t Darwin-ARM64` (console target) | all 15 stages, `MACOS-ARM64-VIEW-OK`, exit 0, stdout readable over ssh |
+| View smoke suite, `-r -d -t macOS-ARM64` (bundle target) | all 15 stages, exit 0, marker written, no `.error`, `codesign --verify` passes on the bundle and in place |
+| chain fixed point 265 -> 266 | both 6523904 bytes, 23 differing bytes in 13 runs: PE timestamp, checksum, the two output-name digits, the two `dd-Mmm-yyyy/h:mm:ss` clocks and the two clock-carrying `movabs` immediates |
+
+The last row and the two rows above it are the Windows/x64 gate. For ARM64 the gate is a
+**containment** measurement, because the change sits where the compiler used to die, so
+every program that compiled before must come out bit-identical -- and that is what the
+byte-diff says. Cross-compiling `red-bootstrap-hybrid.red` for Linux-ARM64 gives
+5505688 bytes from 264, 265 and 266 alike, and:
+
+| pair | `.text` bytes that differ |
+|---|---|
+| built twice with 265 | **0** |
+| 265 vs 266 -- identical sources, 266 being 265's own compilation of them | 6, all inside two instruction windows |
+| 264 vs 265 -- the change under test | 10, all inside those same two windows |
+| console for Linux-ARM64, 264 vs 265 | 6, the same two windows (`environment/console/CLI/console.red`, 2391800 bytes both) |
+
+Decoding those windows names them beyond doubt: they materialize the *compiler's own
+build clock* as a float64 seconds-of-day plus a coarser date field -- `d0` is 8483.0 for
+264 (02:21:23), 1257.0 for 265 (00:20:57), 1921.0 for 266 (00:32:01), and the integer
+field is equal for 265 and 266 because they were built the same day. `mov`/`movk` with the
+opcode byte and the destination register unchanged in every case; no branch, no call, no
+register decision differs. So no codegen decision moved on AAPCS64, which is what licenses
+not re-running the Linux and Windows suites for this change.
+
+`tests/run-macos-arm64-view-tests.sh` now compiles with `-r -d -t macOS-ARM64` -- both the
+flags and the comment about the gap are changed, because the suite *should* have line
+records: this file already says twice that a GUI bundle's stdout is unreachable and a run
+that dies silently is the failure mode to design against, and a `-d` ARM64 crash names the
+Red line it died on. Measured above against the exact bundle the script builds and checks.
+
+That script is not what CI runs. `macOS-ARM64-View-Smoke` compiles inline
+(`.github/workflows/macOS-ARM64.yml:105`) with the same `-r -t macOS-ARM64` and then does
+the bundle checks itself, so the workflow still asks for no line records and that is
+deliberate for now: the job's `setup-red-harness` takes `source: build` when
+`build-toolchain.yml` calls it -- a toolchain built from the sources under test, which will
+carry this fix -- but a *dispatched* run falls back to a published seed, and the published
+seed is generation 260, whose backend dies on `-d` exactly as 264 did. Adding `-d` to the
+workflow step is therefore a seed-repoint follow-up, not a free edit; until then the two
+spellings differ on purpose and the difference is only the line records.
+
+**Also reachable now, and left open on purpose.** Two adjacent gaps showed up while
+probing at depth; neither is ARM64-vs-x64 disagreement introduced here, and both are
+recorded rather than papered over:
+
+- ARM64 still refuses a widening `as integer!` CAST whose operand is a deep BINARY --
+  `compile-function#15 (site 181) phase=measure op=CAST (8) operands=-5,0,0` -- identically
+  at 264 and 265 (`build/tmp-d36/w-264.log`, `w-265.log`), while x64 compiles the same
+  source. `build/tmp-d36/deep-widen.reds` is the repro.
+- x64 refuses a **narrow shift count** (`k1 << k4` with `k4` a `byte!`) at
+  `emit-arithmetic-operation/valid#43 (site 199)`, so the ARM64 probes use `integer!`
+  counts to keep one oracle valid on both backends. Whether ARM64 accepts what x64 refuses
+  there was not measured.
 
 Re-measured on Windows with the same sources, so the shared `view.red` change is known
 not to bite the other native backend: headless View suite **148 tests / 246 assertions /

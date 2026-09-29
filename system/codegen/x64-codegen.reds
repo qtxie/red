@@ -485,8 +485,33 @@ x64-codegen: context [
 	valid-type-ref?: func [ref [integer!] table [type-table!] return: [logic!]][
 		any [
 			all [ref > 0 ref <= table/type-count]
-			all [ref < 0 ref >= -15]
+			;-- -16 is the any-pointer ref this backend synthesises, never a type
+			all [ref < 0 ref <> -16 ref >= -17]
 		]
+	]
+
+	;-- Frontend scalar refs that no backend type record mirrors: byte! shares
+	;-- uint8!'s layout, node-handle! shares integer!'s. Resolved to the alias
+	;-- target here, so the width and signedness matrices stay untouched.
+	scalar-ref: func [ref [integer!] return: [integer!]][
+		case [
+			ref = -15 [-2]
+			ref = -17 [-5]
+			true [ref]
+		]
+	]
+
+	;-- Whether two IR type refs describe the same machine value. The allocator,
+	;-- the peepholes and the argument pairing ask this where a slot's declared
+	;-- type meets the value written to it, and a `node-handle!` slot is exactly
+	;-- an `integer!` slot to the machine -- it is named distinctly only so the
+	;-- frame bitmap can mark handles. Folding it here keeps that naming from
+	;-- reading as a type difference and cost a fused store. `byte!`/`uint8!` are
+	;-- left to canonical-type above, because the cast matrix keeps them apart.
+	same-machine-type?: func [left right [integer!] return: [logic!]][
+		if left = -17 [left: -5]
+		if right = -17 [right: -5]
+		left = right
 	]
 
 	canonical-type: func [
@@ -495,14 +520,14 @@ x64-codegen: context [
 		return: [integer!]
 		/local record [rsir-type!] steps [integer!]
 	][
-		if ref < 0 [return either ref = -15 [-2][ref]]
+		if ref < 0 [return scalar-ref ref]
 		steps: 0
 		while [steps < table/type-count][
 			if any [ref <= 0 ref > table/type-count][return 0]
 			record: as rsir-type! (table/types + ((ref - 1) * RSIR_TYPE_SIZE))
 			unless record/kind = -1 [return ref]
 			ref: record/target
-			if ref < 0 [return either ref = -15 [-2][ref]]
+			if ref < 0 [return scalar-ref ref]
 			steps: steps + 1
 		]
 		0
@@ -807,7 +832,7 @@ x64-codegen: context [
 			cached? [logic!]
 	][
 		if any [ref = 0 depth > table/type-count][return false]
-		if ref = -15 [ref: -2]
+		ref: scalar-ref ref
 		cache: as int-ptr! 0
 		cached?: false
 		kind: 0
@@ -1293,6 +1318,7 @@ x64-codegen: context [
 	][
 		; Canonical arithmetic aliases byte! to uint8!, but the cast matrix does not.
 		if ref = -15 [return 15]
+		if ref = -17 [return 5]
 		if ref < 0 [return 0 - ref]
 		steps: 0
 		while [steps < table/type-count][
@@ -1302,6 +1328,7 @@ x64-codegen: context [
 			unless kind = -1 [return either kind = -6 [12][kind]]
 			ref: record/target
 			if ref = -15 [return 15]
+			if ref = -17 [return 5]
 			if ref < 0 [return 0 - ref]
 			steps: steps + 1
 		]
@@ -2238,7 +2265,7 @@ x64-codegen: context [
 			+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
 		width: value-width ref 0 module/table
 		if any [
-			parameter/type <> ref
+			not same-machine-type? parameter/type ref
 			parameter/flags <> 0
 			not integer-type? ref module/table
 			not any [width = 4 width = 8]][return false]
@@ -2491,7 +2518,7 @@ x64-codegen: context [
 			+ ((fn/first-parameter + other-slot - 1) * RSIR_PARAMETER_SIZE))
 		if any [
 			parameter/flags <> 0
-			parameter/type <> ref
+			not same-machine-type? parameter/type ref
 			not integer-type? ref module/table
 			address-type? parameter/type module/table
 		][return 0]
@@ -2750,7 +2777,7 @@ x64-codegen: context [
 						control-uses/cursor = 0
 						catch-depths/cursor = catch-depths/index
 						parameter/flags = 0
-						literal/a = parameter/type
+						same-machine-type? literal/a parameter/type
 						(logical-kind literal/a table) <> 11
 						machine-value? literal/a 0 table
 					]
@@ -6384,7 +6411,7 @@ x64-codegen: context [
 						imm-set?: all [
 							set-next?
 							following-instruction/op = OP_DROP
-							parameter/type = ref
+							same-machine-type? parameter/type ref
 							parameter/flags = 0
 							any [
 								target-width = 4
@@ -6994,7 +7021,7 @@ x64-codegen: context [
 							state/source-depth = target-slot
 							flags = 0
 							stack-flags/target-slot = 0
-							ref = stack-types/target-slot
+							same-machine-type? ref stack-types/target-slot
 							not floating?
 							any [width = 4 width = 8]
 							state/source-register >= x64-encoder/R8
@@ -9720,7 +9747,7 @@ x64-codegen: context [
 						unless all [
 							depth > 0
 							stack-kinds/depth = VALUE
-							stack-types/depth = ref
+							same-machine-type? stack-types/depth ref
 							stack-flags/depth = instruction/c
 						][return fail-invalid 164 "emit-arithmetic-operation/stack-flags/depth#8"]
 					]
@@ -12237,7 +12264,7 @@ x64-codegen: context [
 					register-pair-operation? next-instruction/a true]
 			][
 				any [
-					all [instruction/a = stack-types/depth integer-type? stack-types/depth table
+					all [same-machine-type? instruction/a stack-types/depth integer-type? stack-types/depth table
 						integer-type? instruction/a table register-pair-operation? next-instruction/a false]
 					all [address-type? stack-types/depth table integer-type? instruction/a table
 						any [next-instruction/a = ADD_OPERATION next-instruction/a = SUBTRACT_OPERATION]
@@ -12277,10 +12304,10 @@ x64-codegen: context [
 				floating?: float-type? target-ref table
 				valid?: either floating? [location = LOCATION_XMM][all [
 					any [location = LOCATION_GPR location = LOCATION_GPR_HOME]
-					target-ref = stack-types/depth
+					same-machine-type? target-ref stack-types/depth
 				]]
 				if valid? [
-					set-pair?: all [target-ref = stack-types/depth
+					set-pair?: all [same-machine-type? target-ref stack-types/depth
 						(instruction-effects/next-index and EFFECT_LIVE) <> 0
 						(instruction-effects/next-index and EFFECT_ELIDED) = 0 next-instruction/op = OP_SET]
 					if all [next-instruction/op = OP_LOAD

@@ -328,20 +328,41 @@ arm64-codegen: context [
 		either value > (2147483647 - padding) [-1][value + padding]
 	]
 
+	;-- Frontend scalar refs that no backend type record mirrors: byte! shares
+	;-- uint8!'s layout, node-handle! shares integer!'s. Resolved to the alias
+	;-- target here, so the width and signedness matrices stay untouched.
+	scalar-ref: func [ref [integer!] return: [integer!]][
+		case [
+			ref = -15 [-2]
+			ref = -17 [-5]
+			true [ref]
+		]
+	]
+
+	;-- Whether two IR type refs describe the same machine value: a `node-handle!`
+	;-- slot is an `integer!` slot to the machine, named distinctly only so the
+	;-- frame bitmap can mark handles, and no allocation or validation decision
+	;-- may read that naming as a type difference. Mirrors the x64 backend.
+	same-machine-type?: func [left right [integer!] return: [logic!]][
+		if left = -17 [left: -5]
+		if right = -17 [right: -5]
+		left = right
+	]
+
 	canonical-type: func [
 		ref [integer!]
 		view [rsir-view!]
 		return: [integer!]
 		/local type [rsir-type!] steps [integer!]
 	][
-		if ref < 0 [return either ref = -15 [-2][ref]]
+		if ref < 0 [return scalar-ref ref]
 		steps: 0
 		while [steps < view/header/type-count][
 			if any [ref <= 0 ref > view/header/type-count][return 0]
 			type: as rsir-type! (view/types + ((ref - 1) * RSIR_TYPE_SIZE))
 			unless type/kind = -1 [return ref]
 			ref: type/target
-			if ref < 0 [return either ref = -15 [-2][ref]]
+			if ref < 0 [return scalar-ref ref]
 			steps: steps + 1
 		]
 		0
@@ -363,7 +384,7 @@ arm64-codegen: context [
 	valid-type-ref?: func [ref [integer!] view [rsir-view!] return: [logic!]][
 		any [
 			all [ref > 0 ref <= view/header/type-count]
-			all [ref < 0 ref >= -15]
+			all [ref < 0 ref >= -17]
 		]
 	]
 
@@ -1465,7 +1486,7 @@ arm64-codegen: context [
 			cached? [logic!]
 	][
 		if any [ref = 0 depth > view/header/type-count][return false]
-		if ref = -15 [ref: -2]
+		ref: scalar-ref ref
 		cache: as int-ptr! 0
 		cached?: false
 		kind: 0
@@ -6337,7 +6358,7 @@ arm64-codegen: context [
 						unless all [
 							depth > 0
 							scratch/stack-kinds/depth = VALUE
-							scratch/stack-types/depth = ref
+							same-machine-type? scratch/stack-types/depth ref
 							scratch/stack-flags/depth = instruction/c
 						][return fail-invalid 184 "compile-function/scratch/stack-flags#18"]
 					]

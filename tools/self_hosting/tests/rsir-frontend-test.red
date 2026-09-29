@@ -4982,4 +4982,95 @@ assert frontend/last-error/message =
 	"invalid target type casting: [pointer! d]"
 	"invalid compound cast target did not report the canonical error"
 
+;-- node-handle!: the 32-bit node index cells store, spelled as a type of its
+;-- own so a later step can tell the collector which slots hold a handle instead
+;-- of range-probing every candidate. It keeps that identity through the
+;-- frontend and behaves exactly like the integer! it replaces.
+handle-ref: frontend/type-ref [node-handle!] copy [] copy []
+assert handle-ref = -17 ["node-handle! did not intern as -17: " mold handle-ref]
+assert ((frontend/ref-kind handle-ref) = 'node-handle)
+	"node-handle! did not resolve back to its own kind"
+assert ((frontend/type-spelling handle-ref) = "node-handle!")
+	"node-handle! has no spelling for diagnostics"
+assert (frontend/canonical-ref handle-ref) = -17
+	"node-handle! was collapsed into integer! before codegen"
+assert none? frontend/ref-kind -16
+	"-16 is the codegen's any-pointer ref; the frontend must not claim it"
+assert all [
+	frontend/integer-kind? 'node-handle
+	frontend/signed-integer? 'node-handle
+	(frontend/integer-width 'node-handle) = 32
+]["node-handle! is not a signed 32-bit integer"]
+assert (frontend/static-literal-width handle-ref) = 4
+	"a node-handle! literal is not four bytes"
+assert all [
+	frontend/compatible-types? -17 -5	;-- an integer! into a handle slot
+	frontend/compatible-types? -5 -17	;-- and a handle out to an integer!
+]["handle and integer! slots did not accept each other"]
+assert all [
+	not (frontend/compatible-types? -17 -6)	;-- uint32!: same width, wrong sign
+	not (frontend/compatible-types? -17 -7)	;-- int64!: a widening the macro hid
+]["node-handle! accepted an integer it used to reject"]
+;-- The collector takes the address of a handle slot and hands it to routines
+;-- declared over `int-ptr!`, so the two spellings must be one type record.
+ptr-types: copy []
+handle-pointee: frontend/type-ref [pointer! [node-handle!]] ptr-types copy []
+integer-pointee: frontend/type-ref [pointer! [integer!]] ptr-types copy []
+assert all [
+	integer? handle-pointee
+	handle-pointee = integer-pointee
+]["pointer! [node-handle!] split int-ptr! into two type records"]
+assert all [
+	not (frontend/cast-forbidden? -5 -17)	;-- as node-handle! 42
+	not (frontend/cast-forbidden? -17 -5)	;-- as integer! handle
+]["a handle could not be cast to and from integer!"]
+foreach source [-12 -13 -1 -11 -6][
+	assert (frontend/cast-forbidden? source -17)
+		= (frontend/cast-forbidden? source -5)
+		["casting to node-handle! diverged from integer! for " mold source]
+]
+
+;-- The whole lowering cost of the new spelling: one word in the image. Every
+;-- instruction, slot and operand the backend reads is still an integer!, so
+;-- naming the global by its own type cannot change the code it compiles to.
+handle-program: {
+	Red/System []
+	root: declare node-handle!
+	bump: func [value [node-handle!] return: [node-handle!]][
+		root: value + 1
+		root
+	]
+}
+handle-ir: compile-text handle-program 'user
+assert binary? handle-ir [
+	"a node-handle! program did not compile: " mold frontend/last-error
+]
+integer-ir: compile-text replace/all handle-program "node-handle!" "integer!"
+	'user
+assert binary? integer-ir [
+	"the integer! twin of the node-handle! program did not compile: "
+	mold frontend/last-error
+]
+assert (length? handle-ir) = (length? integer-ir) [
+	"node-handle! changed the size of the image"
+]
+drift: copy []
+drift-id: 1
+while [drift-id <= length? handle-ir][
+	if (pick handle-ir drift-id) <> (pick integer-ir drift-id) [
+		append drift drift-id
+	]
+	drift-id: drift-id + 1
+]
+assert ((length? drift) = 4) [
+	"node-handle! differed from integer! in " length? drift " bytes,"
+	" not the one declared type ref"
+]
+assert ((word-at handle-ir (drift/1 - 1)) = -17) [
+	"the differing word is not the global's node-handle! type ref"
+]
+assert ((word-at integer-ir (drift/1 - 1)) = -5) [
+	"the integer! twin does not name integer! in that word"
+]
+
 print "PASS: typed postfix Red/System frontend"

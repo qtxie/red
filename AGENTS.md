@@ -18,8 +18,8 @@
 
 ## Current Baselines
 
+- **hybrid-compiler279.exe** (278->279, 6532608 bytes, fixed point): node-handle! is a typed RSIR scalar, folded to integer! by both backends
 - **hybrid-compiler265.exe** (264->265, 6523904 bytes, fixed point at 266): ARM64 deep expression stack support
-- **hybrid-compiler264.exe** (263->264, 6520832 bytes): Objective-C super call fix
 - Compare generated output, not compiler image (build date shifts addresses)
 - Use equal-length output names when comparing generations (embedded path affects size)
 

@@ -113,6 +113,7 @@ compiler-rsir-frontend: context [
 	type-kinds: make map! [
 		int8! i8 byte! byte uint8! u8 int16! i16 uint16! u16
 		integer! i32 int32! i32 uint32! u32 int64! i64 uint64! u64
+		node-handle! node-handle
 		float32! f32 float! f64 float64! f64 logic! logic
 		pointer! pointer c-string! c-string struct! pointer union! pointer
 		function! pointer subroutine! pointer array! pointer
@@ -128,6 +129,8 @@ compiler-rsir-frontend: context [
 	type-codes: make map! [
 		i8 1 u8 2 i16 3 u16 4 i32 5 u32 6 i64 7 u64 8
 		f32 9 f64 10 logic 11 pointer 12 c-string 13 null 14 byte 15
+		;-- 16 is the codegen's synthetic any-pointer ref, never a frontend type.
+		node-handle 17
 		alias -1 struct -2 union -3 function -4 subroutine -5
 		pointer-node -6 array -7 typed-call -8
 	]
@@ -952,9 +955,17 @@ compiler-rsir-frontend: context [
 
 	intern-pointer: func [pointee [integer!] /local id kind][
 		kind: ref-kind pointee
-		unless find [i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 pointer c-string] kind [
+		unless find [
+				i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 pointer c-string
+				node-handle
+			] kind [
 			fail ERROR-UNSUPPORTED "pointer pointee type is unsupported"
 		]
+		;-- The address of a handle is the address of a 32-bit integer: spelling it
+		;-- `pointer! [node-handle!]` must not split `int-ptr!` into two type
+		;-- records, because the collector takes the address of a handle slot and
+		;-- passes it to routines declared over `int-ptr!`.
+		if kind = 'node-handle [pointee: -5]
 		if id: select pointer-types pointee [return id]
 		id: type-count + 1
 		put pointer-types pointee id
@@ -980,10 +991,12 @@ compiler-rsir-frontend: context [
 			find [1 2 4 8] width
 			find [
 				i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string function
+				node-handle
 			] kind
 		][
 			fail ERROR-UNSUPPORTED "literal array element type is unsupported"
 		]
+		if kind = 'node-handle [element: -5]		;-- as in intern-pointer
 		key: mold/flat reduce [element count width]
 		if id: select array-types key [return id]
 		id: type-count + 1
@@ -1217,7 +1230,8 @@ compiler-rsir-frontend: context [
 
 	ref-kind: func [ref [integer!] /local origin kind][
 		if ref < 0 [
-			if ref < -15 [return none]
+			if ref = -17 [return 'node-handle]
+			if any [ref = -16 ref < -17][return none]
 			return pick [
 				i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic pointer c-string null byte
 			]
@@ -1229,7 +1243,8 @@ compiler-rsir-frontend: context [
 		if word? kind [return kind]
 		ref: canonical-ref ref
 		kind: case [
-			ref < -15 [none]
+			ref = -17 ['node-handle]
+			any [ref = -16 ref < -17][none]
 			ref < 0 [
 				pick [
 					i8 u8 i16 u16 i32 u32 i64 u64 f32 f64 logic
@@ -1251,6 +1266,7 @@ compiler-rsir-frontend: context [
 			i16        ["int16!"]
 			u16        ["uint16!"]
 			i32        ["integer!"]
+			node-handle ["node-handle!"]
 			u32        ["uint32!"]
 			i64        ["int64!"]
 			u64        ["uint64!"]
@@ -1423,6 +1439,7 @@ compiler-rsir-frontend: context [
 		case [
 			kind = 'logic [1]
 			kind = 'i32 [2]
+			kind = 'node-handle [2]
 			kind = 'byte [3]
 			kind = 'u8 [14]
 			kind = 'f32 [4]
@@ -3291,14 +3308,14 @@ compiler-rsir-frontend: context [
 	]
 
 	integer-kind?: func [kind [word! none!] return: [logic!]][
-		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64] kind
+		not none? find [i8 byte u8 i16 u16 i32 u32 i64 u64 node-handle] kind
 	]
 
 	integer-width: func [kind [word! none!] return: [integer!]][
 		switch/default kind [
 			i8 [8] byte [8] u8 [8]
 			i16 [16] u16 [16]
-			i32 [32] u32 [32]
+			i32 [32] u32 [32] node-handle [32]
 			i64 [64] u64 [64]
 		][0]
 	]
@@ -3306,7 +3323,7 @@ compiler-rsir-frontend: context [
 	;-- `byte!` is Red/System's unsigned 8-bit type, so it sits with `u8`
 	;-- rather than with `i8`.
 	signed-integer?: func [kind [word! none!] return: [logic!]][
-		not none? find [i8 i16 i32 i64] kind
+		not none? find [i8 i16 i32 i64 node-handle] kind
 	]
 
 	;-- A narrower integer may stand in for a wider one, and an unsigned one
@@ -3360,6 +3377,15 @@ compiler-rsir-frontend: context [
 			;-- hidden global that owns the bytes -- so this cannot be a
 			;-- test on flags.
 			all [source-kind = 'array target-kind = 'pointer]
+			;-- `node-handle!` is a 32-bit node index that the runtime used to
+			;-- spell `integer!`, so a handle slot accepts exactly what an
+			;-- `integer!` slot did: same width, same signedness, no widening
+			;-- to or from any other type. Each branch ends on a comparison,
+			;-- because `compatible-types?` answers with a logic.
+			any [
+				all [source-kind = 'i32 target-kind = 'node-handle]
+				all [source-kind = 'node-handle target-kind = 'i32]
+			]
 			;-- `null` is Red/System's spelling of a null pointer and stands
 			;-- in for anything that is not a number or a logic. `series!`
 			;-- and its kin are struct aliases whose values are pointers, so
@@ -3369,7 +3395,7 @@ compiler-rsir-frontend: context [
 			all [
 				source-kind = 'null
 				target-kind
-				not find [i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 logic] target-kind
+				not find [i8 byte u8 i16 u16 i32 u32 i64 u64 f32 f64 logic node-handle] target-kind
 			]
 		]
 	]
@@ -3426,10 +3452,10 @@ compiler-rsir-frontend: context [
 		target-kind: ref-kind target
 		if any [none? source-kind none? target-kind][return false]
 		any [
-			all [source-kind = 'function not find [function pointer i32] target-kind]
-			all [target-kind = 'f64 not find [f32 f64 i32] source-kind]
-			all [source-kind = 'f64 not find [f32 f64 i32] target-kind]
-			all [source-kind = 'f32 not find [f32 f64 i32] target-kind]
+			all [source-kind = 'function not find [function pointer i32 node-handle] target-kind]
+			all [target-kind = 'f64 not find [f32 f64 i32 node-handle] source-kind]
+			all [source-kind = 'f64 not find [f32 f64 i32 node-handle] target-kind]
+			all [source-kind = 'f32 not find [f32 f64 i32 node-handle] target-kind]
 			all [find [i64 u64] target-kind find [f32 f64] source-kind]
 			all [find [i64 u64] source-kind find [f32 f64] target-kind]
 			all [target-kind = 'byte find [c-string pointer struct union] source-kind]
@@ -3558,7 +3584,7 @@ compiler-rsir-frontend: context [
 		instruction: at output (offset + 1)
 		unless (little-word instruction) = literal-op [return none]
 		ref: little-word skip instruction 4
-		unless (ref-kind ref) = 'i32 [return none]
+		unless find [i32 node-handle] (ref-kind ref) [return none]
 		value: little-word skip instruction 8
 		high: little-word skip instruction 12
 		unless high = (either value < 0 [-1][0]) [return none]
@@ -3752,7 +3778,7 @@ compiler-rsir-frontend: context [
 		case [
 			find [i8 byte u8] kind [1]
 			find [i16 u16] kind [2]
-			find [i32 u32 f32 logic] kind [4]
+			find [i32 u32 f32 logic node-handle] kind [4]
 			find [i64 u64 f64 pointer c-string function null] kind [8]
 			true [0]
 		]
@@ -3927,7 +3953,7 @@ compiler-rsir-frontend: context [
 						operation >= 4
 						operation <= 6
 						left-flags = 0
-						left-kind = 'i32
+						find [i32 node-handle] left-kind
 					][tracked?: true]
 					all [
 						operation = 7

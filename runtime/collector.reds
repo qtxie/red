@@ -1547,14 +1547,11 @@ collector: context [
 			if all [c-low < caller caller < c-high]		;-- only process Red frames (skip externals)
 		]
 			[
-				;-- x64 keeps the bitmap offset three slots below the frame
-				;-- pointer. AArch64 spends that slot on the unwind landing
-				;-- pad and publishes the offset one slot lower instead.
-				#either target = 'ARM64 [
-					slot: frm - 5						;-- position on bitmap slot
-				][
-					slot: frm - 3						;-- position on bitmap slot
-				]
+				;-- Both 64-bit backends publish the bitmap offset at the same
+				;-- slot: x64's prolog pushes it (push rbp/push catch-id/push
+				;-- resume/push bitmap/push 0), ARM64 stores it into its 5-slot
+				;-- prefix. IA-32 (upstream-only) shares the x64 position.
+				slot: frm - 3							;-- position on bitmap slot
 				slot-bits: as-integer slot/value
 				if slot-bits = STACK_BITMAP_BARRIER [break]
 				assert slot-bits >= 0

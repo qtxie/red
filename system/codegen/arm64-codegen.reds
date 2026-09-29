@@ -139,13 +139,16 @@ arm64-codegen: context [
 	target-abi: ABI_APPLE_AARCH64
 	compiler-frame-register: arm64-encoder/FP
 	compiler-frame-active?: false
-	VISIBLE_FRAME_OFFSET: -32
-	;-- Slot reserved for the function's stack-pointer bitmap offset. The
-	;-- collector reads it at a fixed offset below the frame pointer (see
-	;-- scan-stack-refs in runtime/collector.reds). x64 uses frm - 3; AArch64
-	;-- already spends that slot on the unwind landing pad, so the bitmap gets
-	;-- the slot just below the four the exception frame occupies.
-	BITMAP_SLOT_OFFSET: -40
+	;-- Slots reserved below the frame pointer, shared with the collector's walk
+	;-- (scan-stack-refs in runtime/collector.reds) and the unwind sequences.
+	;-- The bitmap offset goes at frm - 3, the slot x64's prolog pushes it to,
+	;-- so the collector reads one offset on every backend. AArch64 needs two
+	;-- slots more than x64's four-slot prefix because its frame-pointer unwind
+	;-- keeps the landing pad and the visible-frame copy on the stack (x64
+	;-- encodes them in .pdata tables), so the prefix is 5 deep.
+	BITMAP_SLOT_OFFSET: -24
+	UNWIND_LANDING_OFFSET: -32
+	VISIBLE_FRAME_OFFSET: -40
 	FRAME_PREFIX_SLOTS: 5
 
 	EFFECT_RETURNS: 1
@@ -4244,7 +4247,7 @@ arm64-codegen: context [
 			at: either null? code [as byte-ptr! 0][code + written]
 			either entry? [
 				encoded: compiler-frame-store at (capacity - written)
-					arm64-encoder/ZR -24 8
+					arm64-encoder/ZR UNWIND_LANDING_OFFSET 8
 			][
 				plan/unwind-fixup: written
 				encoded: arm64-encoder/address-relative at (capacity - written)
@@ -4255,7 +4258,7 @@ arm64-codegen: context [
 			unless entry? [
 				at: either null? code [as byte-ptr! 0][code + written]
 				encoded: arm64-encoder/register-store at (capacity - written)
-					arm64-encoder/X16 arm64-encoder/FP -24 8 arm64-encoder/X17
+					arm64-encoder/X16 arm64-encoder/FP UNWIND_LANDING_OFFSET 8 arm64-encoder/X17
 				if encoded < 0 [return fail-code encoded 419 "emit-prologue/code#7"]
 				written: written + encoded
 			]
@@ -5321,7 +5324,7 @@ arm64-codegen: context [
 		if skip-current? [
 			at: either null? code [as byte-ptr! 0][code + written]
 			encoded: arm64-encoder/frame-load at (capacity - written)
-				arm64-encoder/X2 -24 8 0 8
+				arm64-encoder/X2 UNWIND_LANDING_OFFSET 8 0 8
 			if encoded < 0 [return fail-code encoded 497 "emit-throw-unwind/code#2"]
 			written: written + encoded
 			at: either null? code [as byte-ptr! 0][code + written]
@@ -5347,7 +5350,7 @@ arm64-codegen: context [
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]
 		encoded: arm64-encoder/frame-load at (capacity - written)
-			arm64-encoder/X2 -24 8 0 8
+			arm64-encoder/X2 UNWIND_LANDING_OFFSET 8 0 8
 		if encoded < 0 [return fail-code encoded 502 "emit-throw-unwind/code#7"]
 		written: written + encoded
 		at: either null? code [as byte-ptr! 0][code + written]

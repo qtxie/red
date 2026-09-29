@@ -16,7 +16,9 @@ Red/System [
 #define _1MB				1048576
 #define _2MB				2097152
 #define _16MB				16777216
-#define nodes-per-frame		10000
+#define registry-chunk-log		13			;-- handle >> 13 selects the chunk
+#define registry-chunk-slots	8192			;-- 1 << registry-chunk-log
+#define registry-chunk-mask		8191			;-- handle & mask selects the slot
 #define series-in-use		80000000h		;-- mark a series as used (not collectable by the GC)
 #define flag-ins-both		30000000h		;-- optimize for both head & tail insertions
 #define flag-ins-tail		20000000h		;-- optimize for tail insertions

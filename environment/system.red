@@ -323,7 +323,6 @@ system: context [
 		GC: object [
 			active?: 		routine [return: [logic!]  ][collector/active?]
 			series-cycles:	routine [return: [integer!]][collector/stats/cycles]
-			nodes-cycles:	routine [return: [integer!]][collector/stats/nodes-cycles]
 			pinned-frames:	routine [return: [integer!]][collector/stats/pinned-frames]
 			pinned-bytes:	routine [return: [integer!]][collector/stats/pinned-bytes]
 		]

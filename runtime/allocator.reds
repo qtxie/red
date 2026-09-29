@@ -80,18 +80,6 @@ series-frame!: alias struct! [				;-- series frame header
 	tail	[byte-ptr!]						;-- point to last byte in allocatable region
 ]
 
-node-frame!: alias struct! [				;-- node frame header
-	next	[node-frame!]					;-- next frame or null
-	prev	[node-frame!]					;-- previous frame or null
-	nodes	[integer!]						;-- number of nodes
-	head	[node!]							;-- entry node for the free list (can be null if full)
-	used	[integer!]						;-- number of used nodes in the list
-	birth	[integer!]						;-- GC cycle runs when that node frame has been allocated
-	p-used	[integer!]						;-- used nodes at last GC cycle
-	a-used	[integer!]						;-- bit array of previously used states (1: unchanged/cycle, 0: changed)
-	locked? [logic!]						;-- frame is locked from new node allocations (scheduled to be freed)
-]
-
 big-frame!: alias struct! [					;-- big frame header (for >= 2MB series)
 	next	[big-frame!]					;-- next frame or null
 	prev	[big-frame!]					;-- always null (single linked-list)
@@ -100,9 +88,6 @@ big-frame!: alias struct! [					;-- big frame header (for >= 2MB series)
 
 memory: declare struct! [					; TBD: instanciate this structure per OS thread
 	total	 [integer!]						;-- total memory size allocated (in bytes)
-	n-head	 [node-frame!]					;-- head of node frames list
-	n-tail	 [node-frame!]					;-- tail of node frames list
-	n-active [node-frame!]					;-- currently used node frame
 	s-head	 [series-frame!]				;-- head of series frames list
 	s-active [series-frame!]				;-- actively used series frame
 	s-tail	 [series-frame!]				;-- tail of series frames list
@@ -115,16 +100,75 @@ memory: declare struct! [					; TBD: instanciate this structure per OS thread
 	stk-sz	 [integer!]						;-- number of reference pairs in the buffer
 ]
 
+registry-chunk!: alias struct! [			;-- one fixed slice of the handle registry
+	slots		[ptr-ptr!]					;-- registry-chunk-slots buffer pointers
+	free-next	[int-ptr!]					;-- free-list links, same handle indexing
+]
+
+;-- The registry is the node: entry h *is* the record a node! points at, so a
+;-- reference is handle -> buffer instead of handle -> node -> buffer. Chunks are
+;-- never moved nor merged once created, which is what makes a raw node! (a slot
+;-- address) safe to hold across allocations; the chunk table is internal and is
+;-- only ever read to compute a slot address in the same expression.
 node-registry: declare struct! [
-	entries		[ptr-ptr!]					;-- handle-indexed physical node pointers
-	free-next	[int-ptr!]					;-- handle-indexed free-list links
-	capacity	[integer!]
+	chunks		[registry-chunk!]			;-- one record per chunk, grows by realloc
+	count		[integer!]					;-- chunks in the table
 	next		[integer!]					;-- next never-used positive handle
+	used		[integer!]					;-- entries bound to a buffer
 	free		[integer!]					;-- reusable handle free-list head
 ]
 
 bitarrays-base: declare int-ptr!			;-- points to bit-arrays table
 lib-bitarrays-base: declare int-ptr! 		;-- points to bit-arrays table (libRedRT image)
+
+
+;-------------------------------------------
+;-- Return the registry entry naming a handle, and the free-list word threaded
+;-- through it. Both assume 0 < handle < node-registry/next.
+;-------------------------------------------
+registry-slot: func [
+	handle	[node-handle!]
+	return:	[ptr-ptr!]
+	/local chunk [registry-chunk!]
+][
+	chunk: node-registry/chunks + ((handle - 1) >> registry-chunk-log)
+	chunk/slots + ((handle - 1) and registry-chunk-mask)
+]
+
+registry-link: func [
+	handle	[node-handle!]
+	return:	[int-ptr!]
+	/local chunk [registry-chunk!]
+][
+	chunk: node-registry/chunks + ((handle - 1) >> registry-chunk-log)
+	chunk/free-next + ((handle - 1) and registry-chunk-mask)
+]
+
+;-------------------------------------------
+;-- Append an empty registry chunk
+;-------------------------------------------
+registry-grow: func [
+	/local
+		chunk	[registry-chunk!]
+		count	[integer!]
+		slots	[byte-ptr!]
+][
+	count: node-registry/count
+	if count >= (7FFFFFFFh >> registry-chunk-log)[
+		fire [TO_ERROR(internal no-memory)]
+	]
+	node-registry/chunks: as registry-chunk! realloc
+		as byte-ptr! node-registry/chunks
+		(count + 1) * size? registry-chunk!
+	chunk: node-registry/chunks + count
+	chunk/slots: as ptr-ptr! allocate-virtual registry-chunk-slots * size? node! no
+	chunk/free-next: allocate-virtual registry-chunk-slots * size? integer! no
+	;-- an unbound entry reads as a freed handle, so hand out nothing but zeroed slots
+	slots: as byte-ptr! chunk/slots
+	set-memory slots null-byte registry-chunk-slots * size? node!
+	zerofill chunk/free-next chunk/free-next + registry-chunk-slots
+	node-registry/count: count + 1
+]
 
 
 init-mem: func [/local p [int-ptr!]][
@@ -135,16 +179,12 @@ init-mem: func [/local p [int-ptr!]][
 	memory/stk-sz:	 1000
 	memory/b-head:	 null
 	memory/stk-refs: as ptr-ptr! allocate memory/stk-sz * 2 * size? int-ptr!
-	node-registry/capacity: nodes-per-frame
-	node-registry/entries: as ptr-ptr! allocate node-registry/capacity * size? int-ptr!
-	node-registry/free-next: as int-ptr! allocate node-registry/capacity * size? integer!
-	set-memory
-		as byte-ptr! node-registry/entries
-		null-byte
-		node-registry/capacity * size? int-ptr!
-	zerofill node-registry/free-next node-registry/free-next + node-registry/capacity
+	node-registry/chunks: null
+	node-registry/count: 0
 	node-registry/next: 1
+	node-registry/used: 0
 	node-registry/free: 0
+	registry-grow
 	
 	collector/nodes-list/init
 	
@@ -162,20 +202,21 @@ init-mem: func [/local p [int-ptr!]][
 resolve-node: func [
 	handle	[node-handle!]
 	return:	[node!]
-	/local entry [ptr-ptr!]
+	/local slot [ptr-ptr!]
 ][
 	if zero? handle [return null]
 	;-- Release builds strip assert. Out-of-range / non-handle values must not
-	;-- AV when loading entries[handle-1] (common after GC use-after-free).
+	;-- AV when loading the registry entry (common after GC use-after-free).
 	if any [handle < 1 handle >= node-registry/next][return null]
-	entry: node-registry/entries + (handle - 1)
-	as node! entry/value
+	slot: registry-slot handle
+	if null? slot/value [return null]
+	slot
 ]
 
 resolve-series: func [
 	handle	[node-handle!]
 	return:	[series!]
-	/local node [node!]
+	/local slot [ptr-ptr!]
 	#if debug? = yes [frame [int-ptr!] count [integer!]]
 ][
 	if zero? handle [
@@ -191,14 +232,14 @@ resolve-series: func [
 		]
 		return null
 	]
-	node: resolve-node handle
-	if null? node [
+	slot: either any [handle < 1 handle >= node-registry/next][null][registry-slot handle]
+	if any [null? slot null? slot/value][
 		;-- Freed handle (nonzero). Do not fire[]: error formatting re-enters here.
 		print-line ["*** freed series handle: " handle]
 		#if debug? = yes [stack-trace]
 		halt
 	]
-	as series! node/value
+	as series! slot/value
 ]
 
 node-handle-of: func [
@@ -218,85 +259,56 @@ node-handle-from-cell: func [
 	value
 ]
 
-alloc-node-handle: func [
-	node	[node!]
-	return:	[node-handle!]
+alloc-node: func [
+	series	[series-buffer!]							;-- buffer the new entry is to name
+	return:	[node!]										;-- the registry slot, which *is* the node record
 	/local
-		handle new-capacity [integer!]
-		entry [ptr-ptr!]
-		free-entry free-end [int-ptr!]
-		clear [byte-ptr!]
+		handle [node-handle!]
+		slot	[ptr-ptr!]
+		link	[int-ptr!]
 ][
-	either node-registry/free <> 0 [
-		handle: node-registry/free
-		entry: node-registry/entries + (handle - 1)
-		free-entry: node-registry/free-next + (handle - 1)
-		node-registry/free: free-entry/value
-		free-entry/value: 0
-	][
+	handle: node-registry/free
+	either zero? handle [
 		handle: node-registry/next
-		if handle > node-registry/capacity [
-			new-capacity: node-registry/capacity * 2
-			if any [new-capacity <= node-registry/capacity new-capacity <= 0][
-				fire [TO_ERROR(internal no-memory)]
-			]
-			node-registry/entries: as ptr-ptr! realloc
-				as byte-ptr! node-registry/entries
-				new-capacity * size? int-ptr!
-			clear: as byte-ptr! (node-registry/entries + node-registry/capacity)
-			set-memory
-				clear
-				null-byte
-				(new-capacity - node-registry/capacity) * size? int-ptr!
-			node-registry/free-next: as int-ptr! realloc
-				as byte-ptr! node-registry/free-next
-				new-capacity * size? integer!
-			free-entry: node-registry/free-next + node-registry/capacity
-			free-end: node-registry/free-next + new-capacity
-			zerofill free-entry free-end
-			node-registry/capacity: new-capacity
-		]
+		if (handle - 1) >= (node-registry/count << registry-chunk-log) [registry-grow]
 		node-registry/next: handle + 1
-		entry: node-registry/entries + (handle - 1)
+	][
+		link: registry-link handle
+		node-registry/free: link/value
+		link/value: 0
 	]
-	entry/value: as int-ptr! node
-	handle
+	slot: registry-slot handle								;-- re-read the chunk table, it may have grown
+	slot/value: as int-ptr! series
+	series/node: handle
+	node-registry/used: node-registry/used + 1
+	slot
 ]
 
 free-node-handle: func [
 	handle [node-handle!]
 	/local
-		entry [ptr-ptr!]
-		free-entry [int-ptr!]
+		slot [ptr-ptr!]
+		link [int-ptr!]
 ][
 	assert handle > 0
-	entry: node-registry/entries + (handle - 1)
-	assert entry/value <> null
-	entry/value: null
-	free-entry: node-registry/free-next + (handle - 1)
-	assert zero? free-entry/value
-	free-entry/value: node-registry/free
+	slot: registry-slot handle
+	assert slot/value <> null
+	slot/value: null
+	node-registry/used: node-registry/used - 1
+	link: registry-link handle
+	assert zero? link/value
+	link/value: node-registry/free
 	node-registry/free: handle
-]
-
-set-node-handle: func [
-	handle [node-handle!]
-	node   [node!]
-	/local entry [ptr-ptr!]
-][
-	assert handle > 0
-	entry: node-registry/entries + (handle - 1)
-	assert entry/value <> null
-	entry/value: as int-ptr! node
 ]
 
 set-node-value: func [
 	handle [node-handle!]
 	value  [int-ptr!]
-	/local node [node!]
+	/local slot [ptr-ptr!]
 ][
-	node: resolve-node handle
-	node/value: value
+	slot: registry-slot handle
+	assert slot/value <> null							;-- a freed entry must not be retargeted
+	slot/value: value
 ]
 
 ;; (1) Series frames size will grow from 1MB up to 2MB (arbitrary selected). This
@@ -382,15 +394,31 @@ free-virtual: func [
 ;-- Free all frames (part of Red's global exit handler)
 ;-------------------------------------------
 free-all: func [
-	/local n-frame s-frame b-frame n-next s-next b-next
+	/local
+		s-frame	[series-frame!]
+		b-frame	[big-frame!]
+		s-next	[series-frame!]
+		b-next	[big-frame!]
+		chunk	[registry-chunk!]
+		k		[integer!]
 ][
-	n-frame: memory/n-head
-	while [n-frame <> null][
-		n-next: n-frame/next
-		free-virtual as int-ptr! n-frame
-		n-frame: n-next
+	k: node-registry/count
+	chunk: node-registry/chunks
+	while [k > 0][
+		free-virtual as int-ptr! chunk/slots
+		free-virtual chunk/free-next
+		chunk: chunk + 1
+		k: k - 1
 	]
-	
+	if node-registry/chunks <> null [
+		free as byte-ptr! node-registry/chunks
+		node-registry/chunks: null
+	]
+	node-registry/count: 0
+	node-registry/next: 1
+	node-registry/used: 0
+	node-registry/free: 0
+
 	s-frame: memory/s-head
 	while [s-frame <> null][
 		s-next: s-frame/next
@@ -405,167 +433,7 @@ free-all: func [
 		b-frame: b-next
 	]
 
-	if node-registry/entries <> null [
-		free as byte-ptr! node-registry/entries
-		node-registry/entries: null
-	]
-	if node-registry/free-next <> null [
-		free as byte-ptr! node-registry/free-next
-		node-registry/free-next: null
-	]
-	node-registry/capacity: 0
-	node-registry/next: 1
-	node-registry/free: 0
 	if collector/stats? [collector/dump-stats]
-]
-
-;-------------------------------------------
-;-- Format the node frame stack by filling it with pointers to all nodes
-;-------------------------------------------
-format-nodes: func [
-	frame [node-frame!]						;-- node frame to format
-	/local
-		head tail node [node!]
-][
-	head: as node! frame + 1
-	tail: (head + frame/nodes) - 1			;-- exclude last slot from the loop
-	frame/head: head
-	node: head
-	while [node < tail][
-		node/value: as int-ptr! node + 1
-		node: node + 1
-	]
-	node/value: null 						;-- set last node to null to mark the list end
-]
-
-;-------------------------------------------
-;-- Allocate a node frame buffer and initialize it
-;-------------------------------------------
-alloc-node-frame: func [
-	size 	[integer!]						;-- nb of nodes
-	return:	[node-frame!]					;-- newly initialized frame
-	/local
-		frame [node-frame!]
-		 sz	  [integer!]
-][
-	assert positive? size
-	sz: size * (size? node!) + (size? node-frame!) ;-- total required size for a node frame
-	frame: as node-frame! allocate-virtual sz no ;-- R/W only
-
-	frame/prev:   null
-	frame/next:   null
-	frame/nodes:  size
-	frame/used:   0
-	frame/birth:  collector/stats/cycles
-	frame/p-used: 0
-	frame/a-used: 0
-	frame/locked?: no
-
-	either null? memory/n-head [
-		memory/n-head: frame				;-- first item in the list
-		memory/n-tail: frame
-		memory/n-active: frame
-	][
-		memory/n-tail/next: frame			;-- append new item at tail of the list
-		frame/prev: memory/n-tail			;-- link back to previous tail
-		memory/n-tail: frame				;-- now tail is the new item
-	]
-	
-	format-nodes frame						;-- prepare the node frame for use
-	frame
-]
-
-;-------------------------------------------
-;-- Release a node frame buffer
-;-------------------------------------------
-free-node-frame: func [
-	frame [node-frame!]						;-- frame to release
-][
-	either null? frame/prev [				;-- if frame = head
-		memory/n-head: frame/next			;-- head now points to next one
-		if memory/n-head <> null [memory/n-head/prev: null]
-	][
-		either null? frame/next [			;-- if frame = tail
-			memory/n-tail: frame/prev		;-- tail is now at one position back
-			frame/prev/next: null
-		][
-			frame/prev/next: frame/next		;-- link preceding frame to next frame
-			frame/next/prev: frame/prev		;-- link back next frame to preceding frame
-		]
-	]
-	if memory/n-active = frame [
-		memory/n-active: memory/n-tail		;-- reset active frame to last one @@
-		assert not memory/n-tail/locked?
-	]
-	assert not all [						;-- ensure that list is not empty
-		null? memory/n-head
-		null? memory/n-tail
-	]
-	free-virtual as int-ptr! frame			;-- release the memory to the OS
-]
-
-;-------------------------------------------
-;-- Obtain a free node from a node frame
-;-------------------------------------------
-alloc-node: func [
-	return: [node!]							;-- return a free node pointer
-	/local
-		frame [node-frame!]
-		node  [node!]
-][
-	frame: memory/n-active					;-- take node from active node frame
-	if null? frame/head [
-		frame: memory/n-head
-		while [all [frame <> null any [frame/head = null frame/locked?]]][frame: frame/next]
-		if null? frame [frame: alloc-node-frame nodes-per-frame]
-		memory/n-active: frame
-	]
-	assert not frame/locked?
-	node: frame/head
-	frame/head: as node! node/value
-	node/value: null
-	frame/used: frame/used + 1
-	node
-]
-
-;-------------------------------------------
-;-- Release a used node
-;-------------------------------------------
-free-node: func [
-	frame [node-frame!]
-	node  [node!]							;-- node to release
-][
-	assert node <> null
-	node/value: as int-ptr! frame/head
-	frame/head: node
-	frame/used: frame/used - 1
-]
-
-;-------------------------------------------
-;-- Free empty node frames
-;-------------------------------------------
-collect-node-frames: func [
-	/local
-		frame next [node-frame!]
-		unset? [logic!]
-][
-	unset?: yes
-	frame: memory/n-head
-	while [frame <> null][
-		next: frame/next
-		either any [zero? frame/used frame/locked?][
-			free-node-frame frame
-		][
-			if all [unset? frame/used < frame/nodes][
-				memory/n-active: frame
-				unset?: no
-			]
-			frame/a-used: frame/a-used << 1 
-			frame/a-used: frame/a-used or as-integer frame/p-used = frame/used
-			frame/p-used: frame/used		;-- save used nodes (stats purposes)
-		]
-		frame: next
-	]
 ]
 
 ;-------------------------------------------
@@ -805,38 +673,33 @@ alloc-series-buffer: func [
 ]
 
 ;-------------------------------------------
-;-- Allocate a node and a series from the active series frame, return the node
+;-- Allocate a series from the active series frame, return its node
 ;-------------------------------------------
 alloc-series: func [
 	size	[integer!]						;-- number of elements to store
 	unit	[integer!]						;-- size of atomic elements stored
 	offset	[integer!]						;-- force a given offset for series buffer
-	return: [node!]							;-- return a new node pointer (pointing to the newly allocated series buffer)
-	/local series [series!] node [node!]
+	return: [node!]							;-- registry entry pointing to the newly allocated series buffer
+	/local series [series!]
 ][
 ;	#if debug? = yes [print-wide ["allocating series:" size unit offset lf]]
 	series: null
-	node: null
 	series: alloc-series-buffer size unit offset
-	node: alloc-node						;-- get a new node
-	series/node: alloc-node-handle node		;-- link series and stable handle
-	node/value: as int-ptr! series ;(as byte-ptr! series) + size? series-buffer!
-	node									;-- return the node pointer
+	alloc-node series
 ]
 
 ;-------------------------------------------
-;-- Allocate a series using malloc, return the node
+;-- Allocate a series using malloc, return its node
 ;-------------------------------------------
 alloc-fixed-series: func [
 	usize	[integer!]						;-- number of elements to store
 	unit	[integer!]						;-- size of atomic elements stored
 	offset	[integer!]						;-- force a given offset for series buffer
-	return: [node!]							;-- return a new node pointer (pointing to the newly allocated series buffer)
+	return: [node!]							;-- registry entry pointing to the newly allocated series buffer
 	/local
 		series	 [series-buffer!]
 		size	 [integer!]
 		sz		 [integer!]
-		node	 [node!]
 ][
 ;	#if debug? = yes [print-wide ["allocating series:" size unit offset lf]]
 	assert positive? usize
@@ -850,10 +713,7 @@ alloc-fixed-series: func [
 	series/offset: as cell! (as byte-ptr! series + 1) + offset
 	series/tail: series/offset
 
-	node: alloc-node						;-- get a new node
-	series/node: alloc-node-handle node		;-- link series and stable handle
-	node/value: as int-ptr! series
-	node									;-- return the node pointer
+	alloc-node series
 ]
 
 ;-------------------------------------------

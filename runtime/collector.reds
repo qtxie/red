@@ -25,14 +25,8 @@ collector: context [
 		FRAME_SERIES
 	]
 
-	prefs: declare struct! [
-		nodes-gc-trigger 		[integer!]				;-- 0-31: node GC trigger age (in stats/cycles)
-		;nodes-core-nb			[integer!]				;-- threshold below which no nodes compacting is done
-	]
-	
 	stats: declare struct! [
 		cycles		 [integer!]							;-- nb or GC runs
-		nodes-cycles [integer!]							;-- nb of node frames compaction runs
 		pinned-frames [integer!]						;-- conservatively retained series frames in current cycle
 		pinned-bytes  [integer!]						;-- bytes retained by conservative frame pins
 		mark-time	 [float!]							;-- cumulative marking seconds		(RED_GC_STATS)
@@ -62,9 +56,6 @@ collector: context [
 	ext-markers: as ptr-ptr! allocate ext-size * size? int-ptr!
 	ext-top: ext-markers
 	
-	refs: as int-ptr! 0
-	refs-size: 20000
-
 	;-- Marking worklist: pairs of (head tail) cell pointers still to walk.
 	;-- Marking used to recurse through one native frame per nesting level, so a
 	;-- deep block chain was a stack overflow with no diagnostic, and the mark
@@ -166,11 +157,8 @@ collector: context [
 		]
 	]
 
-	init: func [
-		/local mask [integer!]
-	][
+	init: func [][
 		stats/cycles: 			0
-		stats/nodes-cycles:		0
 		stats/pinned-frames:	0
 		stats/pinned-bytes:	0
 		stats/mark-time:		0.0
@@ -193,7 +181,6 @@ collector: context [
 		stats/gap-bound:		0
 		stats/gap-unpub:		0
 		stats/gap-refused:		0
-		prefs/nodes-gc-trigger: 5						;-- trigger if node frame is unchanged after 5 cycles
 		stress?: read-stress-env :stress-period
 		stats?:  read-stats-env
 		check-abi
@@ -209,25 +196,6 @@ collector: context [
 		pa: as ptr-ptr! a
 		pb: as ptr-ptr! b
 		SIGN_COMPARE_RESULT(pa/value pb/value)
-	]
-
-	node-record!: alias struct! [
-		node	[node!]
-		handle	[node-handle!]
-	]
-
-	compare-node-record-cb: func [
-		[cdecl]
-		a [int-ptr!]
-		b [int-ptr!]
-		return: [integer!]
-		/local
-			ra [node-record!]
-			rb [node-record!]
-	][
-		ra: as node-record! a
-		rb: as node-record! b
-		SIGN_COMPARE_RESULT(ra/node rb/node)
 	]
 	
 	frames-list: context [
@@ -261,12 +229,14 @@ collector: context [
 		series/size: min-size
 		pinned/size: fit-cache
 		
-		rebuild: func [									;-- build an array of node frames pointers
+		rebuild: func [									;-- build an array of registry chunk and frame pointers
 			/local
-				frm	[node-frame!]
+				frm	[series-frame!]
+				chunk [registry-chunk!]
 				pos [ptr-ptr!]
 				s	[list!]
 				cnt [integer!]
+				k	[integer!]
 				process [subroutine!]
 		][
 			;-- allocation alignement not guaranteed, so L1 cache optmization is only eventual.
@@ -298,20 +268,34 @@ collector: context [
 				s/count: cnt
 			]
 			
-			s: nodes									;-- node frames
-			frm: memory/n-head
+			s: nodes									;-- registry chunks
+			chunk: node-registry/chunks
+			k: node-registry/count
 			cnt: 0
 			pos: s/list
-			process
+			while [k > 0][								;-- a chunk is a fixed-width record, unlike a frame
+				pos/value: as int-ptr! chunk/slots
+				pos: pos + 1
+				cnt: cnt + 1
+				if cnt >= s/size [
+					s/size: s/size * 2
+					s/list: as ptr-ptr! realloc as byte-ptr! s/list s/size * size? int-ptr!
+					pos: s/list + cnt
+				]
+				chunk: chunk + 1
+				k: k - 1
+			]
+			qsort as byte-ptr! s/list cnt size? int-ptr! :compare-cb
+			s/count: cnt
 			
 			s: series									;-- regular series frames
-			frm: as node-frame! memory/s-head			
+			frm: memory/s-head			
 			cnt: 0
 			pos: s/list
 			process
 			
 			if memory/b-head <> null [					;-- big series
-				frm: as node-frame! memory/b-head
+				frm: as series-frame! memory/b-head
 				pos: s/list + cnt
 				process
 			]
@@ -422,8 +406,8 @@ collector: context [
 				end? series? [logic!]
 		][
 			series?: type = FRAME_SERIES
-			s: either series? [h: size? series-frame!  series][h: size? node-frame!  nodes]
-			w: nodes-per-frame * size? node!			;-- fixed node frame width
+			s: either series? [h: size? series-frame!  series][h: 0 nodes]
+			w: registry-chunk-slots * size? node!		;-- fixed registry chunk width
 			
 			either s/count <= fit-cache [				;== linear search
 				p: s/list
@@ -477,170 +461,35 @@ collector: context [
 		]
 	]
 	
-	nodes-list: context [								;-- nodes freeing batch handling
-		list:	  as node-record! 0
+	nodes-list: context [								;-- handles freeing batch handling
+		list:	  as int-ptr! 0
 		min-size: 20000
-		buf-size: min-size								;-- initial number of supported nodes
-		count:	  0										;-- current number of stored nodes
+		buf-size: min-size								;-- initial number of supported handles
+		count:	  0										;-- current number of stored handles
 		
-		init: does [list: as node-record! allocate buf-size * size? node-record!]
+		init: does [list: as int-ptr! allocate buf-size * size? integer!]
 		
 		store: func [
 			handle [node-handle!]
-			/local
-				node [node!]
-				slot [node-record!]
+			/local slot [int-ptr!]
 		][
 			if zero? handle [exit]					;-- expanded series clears the old back-reference
-			node: resolve-node handle
 			if count = buf-size [flush]					;-- buffer full, flush it first
 			slot: list + count
-			slot/node: node
-			slot/handle: handle
+			slot/value: handle
 			count: count + 1
 		]
 		
-		flush: func [									;-- assumes frames-list buffer is built and sorted
-			/local
-				frm new [int-ptr!]
-				p e [ptr-ptr!]
-				node [node!]
-				n [node-record!]
-				frm-nb w handle [integer!]
+		flush: func [									;-- hand every queued entry back to the registry
+			/local p [int-ptr!]
 		][
 			if zero? count [exit]
-			qsort as byte-ptr! list count size? node-record! :compare-node-record-cb
-			p: frames-list/nodes/list
-			e: p + frames-list/nodes/count
-			w: nodes-per-frame * size? node!			;-- node frame width
-			n: list
-			
+			p: list
 			loop count [
-				node: n/node
-				handle: n/handle
-				while [
-					frm: as int-ptr! ((as node-frame! p/value) + 1)
-					not all [frm <= as int-ptr! node  (as int-ptr! node) < as int-ptr! ((as byte-ptr! frm) + w)]
-				][
-					p: p + 1
-					assert p <= e						;-- parent frame should always be found
-				]
-				free-node-handle handle
-				free-node as node-frame! p/value node
-				n/node: null							;-- not strictly needed, but cleaner that way.
-				n/handle: 0
-				n: n + 1
+				free-node-handle p/value
+				p: p + 1
 			]
 			count: 0									;-- resets the list to its head (clears the list content)
-		]
-	]
-	
-	calc-free-slots: func [
-		return: [integer!]
-		/local
-			frame [node-frame!]
-			cnt	  [integer!]
-	][
-		frame: memory/n-head
-		cnt: 0
-		until [
-			if all [frame/head <> null not frame/locked?][cnt: cnt + nodes-per-frame - frame/used]
-			frame: frame/next
-			frame = null
-		]
-		cnt
-	]
-
-	compact-node: func [
-		src		[node-frame!]
-		refs	[int-ptr!]
-		/local
-			slot head tail new [node!]
-			ptr [int-ptr!]
-			frame dst  [node-frame!]
-			s [series!]
-			select-dst [subroutine!]
-	][
-		select-dst: [									;-- subroutine for finding a destination frame
-			frame: memory/n-active
-			if null? frame/head [
-				while [any [frame = src frame/head = null frame/locked?]][frame: frame/next]
-				memory/n-active: frame
-			]
-			assert frame <> null
-			frame
-		]
-		
-		dst: select-dst
-		head: as node! src + 1							;-- skip frame header
-		slot: head										;-- 1st node slot
-		tail: slot + src/nodes
-
-		loop src/nodes [								;-- loop over each node's value in frame
-			ptr: slot/value
-			if all [
-				ptr <> null
-				any [ptr < as int-ptr! head  (as int-ptr! tail) < ptr]
-			][										;-- move node's value if it is not an internal free-list link
-				if null? dst/head [dst: select-dst]		;-- if dst frame is full, find a new one
-				new: dst/head							;-- alloc node slot in dst frame
-				dst/head: as node! new/value			;-- set free list head to next free slot
-				new/value: ptr							;-- transfer the node's full-width value
-				_hashtable/rs-put refs as-integer slot as-integer new	;-- store old (key), new (value) pair
-				;print-line ["relocating node: " slot " from frame " src " to " dst " (new: " new ")"]
-				s: as series! ptr
-				set-node-handle s/node new				;-- retarget the stable handle
-				src/used: src/used - 1					;-- not strictly needed, just for sake of internal consistency
-				dst/used: dst/used + 1
-			]
-			slot: slot + 1
-		]
-		assert src/used = 0
-		src/locked?: yes								;-- prevents new allocations, schedules for freeing at end of GC pass
-	]
-	
-	do-node-cycle: func [
-		/local
-			frame [node-frame!]
-			mask !mask avail [integer!]
-			done? [logic!]
-	][
-		assert nodes-list/count = 0
-		!mask: 1 << (prefs/nodes-gc-trigger + 1) - 1	;-- create mask for checking frame usage across last 32 GC passes
-
-		frame: memory/n-head
-		while [all [frame <> null null? frame/head]][frame: frame/next]
-		if null? frame [exit]							;-- all the frames are full
-		memory/n-active: frame							;-- initialize dst
-
-		done?: no
-		avail: calc-free-slots							;-- nb of potential free destination slots (including the ones from frames to be compacted)
-		frame: memory/n-tail
-		until [
-			;probe [frame ", used: " frame/used ", free: " frame/nodes - frame/used ", birth: " frame/birth ", a-used: " as int-ptr! frame/a-used]
-			if all [
-				frame/a-used and !mask = !mask			;-- node frame been unused for several GC passes (5 by default)
-				frame/used < 5000						;-- only compact frames with < 50% usage
-				avail > nodes-per-frame					;-- and only if enough destination slots left, simplified from: frame/used < (avail - (nodes-per-frame - frame/used))
-				frame <> memory/n-active				;-- src <> dst
-			][
-				if refs = null [refs: _hashtable/rs-init refs-size]
-				avail: avail - nodes-per-frame
-				compact-node frame refs
-				done?: yes
-			]
-			frame: frame/prev
-			frame = null
-		]
-		if done? [stats/nodes-cycles: stats/nodes-cycles + 1] ;-- increment count if at least one frame was compacted.
-	]
-	
-	refresh-array: func [p [node!] end [node!] /local new [int-ptr!]][
-		while [p < end][
-			;probe ["p: " p ", node: " as int-ptr! p/value]
-			new: _hashtable/rs-get refs as-integer p/value
-			if new <> null [prin "." p/value: as int-ptr! new/value]
-			p: p + 1
 		]
 	]
 	
@@ -649,20 +498,12 @@ collector: context [
 		return: [logic!]								;-- TRUE if newly marked, FALSE if already done
 		/local
 			node [node!]
-			new  [int-ptr!]
-			s	  [series!]
-			new?  [logic!]
+			s	 [series!]
+			new? [logic!]
 			flags [integer!]
 	][
-		if refs <> null [
-			new: _hashtable/rs-get refs as-integer ptr/value
-			if new <> null [
-				;probe ["(keep) ptr: " ptr ", node: " as node! ptr/value ", new: " as node! new/value]
-				ptr/value: as int-ptr! new/value
-			]
-		]	
 		node: as node! ptr/value
-		if any [null? node null? node/value][return no]
+		if any [null? node null? node/value][return no]	;-- an unbound slot names nothing
 		s: as series! node/value
 		flags: s/flags
 		new?: flags and flag-gc-mark = 0
@@ -817,7 +658,6 @@ collector: context [
 			handle [integer!]
 			p     [int-ptr!]
 			entry [ptr-ptr!]
-			node  [node!]
 			s     [series!]
 			flags [integer!]
 			unseen? [logic!]
@@ -833,26 +673,23 @@ collector: context [
 			p: sp/value
 			either any [named? p = as int-ptr! handle][
 				unless named? [stats/probe-roots: stats/probe-roots + 1]
-				entry: node-registry/entries + (handle - 1)
+				entry: registry-slot handle
 				if entry/value <> null [
-					node: as node! entry/value
-					if node/value <> null [
-						s: as series! node/value
-						flags: s/flags
-						unseen?: either GET_UNIT(s) = 16 [
-							any [flags and flag-gc-mark = 0 flags and flag-gc-scan = 0]
-						][flags and flag-gc-mark = 0]
-						if unseen? [
-							;-- This walk runs last, so a node still unmarked here had no
-							;-- other root this cycle: the probe is what kept it alive.
-							stats/probe-new: stats/probe-new + 1
-						]
-						either GET_UNIT(s) = 16 [
-							mark-block-node as int-ptr! sp
-						][
-							keep as int-ptr! sp
-							if GET_UNIT(s) = 1 [mark-hashtable-node node]
-						]
+					s: as series! entry/value
+					flags: s/flags
+					unseen?: either GET_UNIT(s) = 16 [
+						any [flags and flag-gc-mark = 0 flags and flag-gc-scan = 0]
+					][flags and flag-gc-mark = 0]
+					if unseen? [
+						;-- This walk runs last, so a node still unmarked here had no
+						;-- other root this cycle: the probe is what kept it alive.
+						stats/probe-new: stats/probe-new + 1
+					]
+					either GET_UNIT(s) = 16 [
+						mark-block-node as int-ptr! sp
+					][
+						keep as int-ptr! sp
+						if GET_UNIT(s) = 1 [mark-hashtable-node entry]
 					]
 				]
 			][
@@ -1231,14 +1068,12 @@ collector: context [
 			node: as node! p
 			if all [
 				node/value <> null
-				not frames-list/find node/value FRAME_NODES
 				(frames-list/find-series-frame node/value) <> null
 			][
 				s: find-series-owner node/value
 				if all [s <> null node/value = as int-ptr! s][
 					keep-raw sp
-					node: as node! sp/value
-					mark-series-root as series! node/value yes
+					mark-series-root s yes
 					stats/stack-roots: stats/stack-roots + 1
 					return refs
 				]
@@ -2152,24 +1987,16 @@ collector: context [
 			if verbose > 0 [print [
 				"root: " block/rs-length? root "/" ***-root-size
 				", runs: " stats/cycles
-				", nodes-runs: " stats/nodes-cycles
-;; run-all-comp2 has strange nodes-runs pattern: check!
 				", mem: " 	memory-info null 1
 			]]
 			if verbose > 1 [probe "^/marking..."]
 		]
 
-		;-- Compaction relocates node records and records where each went in
-		;-- `refs`, so the raw pointers this pass still finds can be rewritten.
-		;-- hashtable! names every array it owns by a handle now, so marking a
-		;-- table reads its header and never rewrites it -- including the two
-		;-- roots below, which hold handles rather than the nodes they named.
-		;-- X64/ARM64 skip this pass (rs-* relocation map still 32-bit keyed).
-		#either any [target = 'X86-64 target = 'ARM64] [
-			0
-		][
-			do-node-cycle
-		]
+		;-- A registry slot never moves, so a raw node! that a Red/System local still
+		;-- holds names the same buffer across any number of cycles: there is nothing
+		;-- left to rewrite, only to reach through. hashtable! names every array it
+		;-- owns by a handle, so marking a table reads its header and never writes it
+		;-- -- including the two roots below, which hold handles rather than nodes.
 		;-- A walk that ended early would leave ranges queued and the next cycle
 		;-- marking from a stale stack; marking itself cannot unwind, so this is
 		;-- a tripwire rather than a recovery.
@@ -2206,11 +2033,10 @@ collector: context [
 		]
 		
 		#if debug? = yes [if verbose > 1 [probe "scanning native stack"]]
-		frames-list/rebuild								;-- refresh nodes and series frames list
+		frames-list/rebuild								;-- refresh registry chunks and series frames list
 		if timed? [t1: platform/perf-time  d-mark: t1 - t0]
 		scan-stack-refs yes
 		mark-pinned-frames
-		if refs <> null [cycles/refresh]
 		if timed? [t2: platform/perf-time  d-scan: t2 - t1]
 
 		#if debug? = yes [if verbose > 1 [probe "sweeping..."]]
@@ -2219,13 +2045,7 @@ collector: context [
 		collect-series-frames COLLECTOR_RELEASE
 		collect-big-frames
 		nodes-list/flush
-		collect-node-frames
 		if timed? [d-sweep: (platform/perf-time) - t2]
-
-		if refs <> null [
-			_hashtable/rs-destroy refs					;-- clear all the node entries
-			refs: null
-		]
 	
 		;-- unmark fixed series
 		unmark root/node
@@ -2309,21 +2129,15 @@ collector: context [
 		;== Memory integrity checkings ==
 		
 		#enum errors! [
-			NODE_FRM_HEAD: 1
-			NODE_FRM_NO_LOCK
-			NODE_FRM_SIZE
-			NODE_FRM_USED
-			NODE_FRM_FREE
-			NODE_FRM_USED_CTRL
+			REG_RANGE: 1
+			REG_UNBOUND
+			REG_FREE_CTRL
 		]
 		
 		messages: protect [
-			"node frame's /prev is not Null at linked-list head"
-			"locked node frame not freed"
-			"node frame slots size invalid"
-			"node frame used slots value out of range"
-			"node frame free slots inconsistent"
-			"node frame counted used slots does not match frame's /used value"
+			"free list holds a handle outside the registry range"
+			"a handle in the free list is still bound to a buffer"
+			"free list length does not match the number of unbound entries"
 		]
 		
 		--assert: func [id [integer!] b [logic!]][
@@ -2336,61 +2150,40 @@ collector: context [
 				quit -1
 			]
 		]
-
-		check-node-frames: func [
+		
+		check-registry: func [
 			verbose [integer!]
 			/local
-				frame	[node-frame!]
-				v [int-ptr!]
-				p head tail slot [node!]
-				free used w [integer!]
+				slot	[ptr-ptr!]
+				link	[int-ptr!]
+				h handle [integer!]
+				free used [integer!]
 		][
 			if verbose > 0 [print lf]
 			
-			frame: memory/n-head
-			--assert NODE_FRM_HEAD frame/prev = null
-						
-			until [
-				;-- header checkings
-				--assert NODE_FRM_NO_LOCK	not frame/locked?
-				--assert NODE_FRM_SIZE		frame/nodes = nodes-per-frame
-				--assert NODE_FRM_USED		all [0 <= frame/used  frame/used <= nodes-per-frame]
-				
-				;-- free slots list consistency checking
-				free: 0
-				p: frame/head
-				
-				while [p <> null][
-					free: free + 1
-					p: as node! p/value					;-- next free slot
-				]
-				if verbose > 0 [probe ["Frame: " frame ", /used: " frame/used ", free: " free]]
-				--assert NODE_FRM_FREE nodes-per-frame - frame/used = free
-				
-				;-- full slots checking
-				head: as node! frame + 1				;-- skip frame header
-				slot: head
-				tail: slot + frame/nodes
-				w: nodes-per-frame * size? node!		;-- fixed node frame width
-				used: 0
-				
-				loop frame/nodes [
-					v: slot/value
-					unless any [
-						null? v
-						all [(as int-ptr! head) <= v v < as int-ptr! tail]
-					][
-						used: used + 1
-						;also check if part of series frame
-					]
-					slot: slot + 1
-				]
-				if verbose > 0 [probe ["Frame: " frame ", /used: " frame/used ", counted: " used]]
-				--assert NODE_FRM_USED_CTRL frame/used = used
-				
-				frame: frame/next
-				frame = null
+			;-- a handle below `next` has been handed out at least once, so it is
+			;-- either bound to a buffer or waiting in the free list
+			used: 0
+			free: 0
+			h: 1
+			while [h < node-registry/next][
+				slot: registry-slot h
+				either null? slot/value [free: free + 1][used: used + 1]
+				h: h + 1
 			]
+			if verbose > 0 [probe ["Registry: " used " bound, " free " unbound"]]
+			
+			h: node-registry/free
+			handle: 0
+			while [all [h <> 0 handle <= free]][			;-- bounded: a cycle cannot spin here
+				--assert REG_RANGE all [h >= 1 h < node-registry/next]
+				slot: registry-slot h
+				--assert REG_UNBOUND null? slot/value
+				link: registry-link h
+				h: link/value
+				handle: handle + 1
+			]
+			--assert REG_FREE_CTRL free = handle
 		]
 		
 		validate: func [
@@ -2398,8 +2191,8 @@ collector: context [
 		][
 			verbosity: 0
 			print-line "^/== Memory Checks=="
-			print "=> nodes frames checking..."
-			check-node-frames verbosity
+			print "=> node registry checking..."
+			check-registry verbosity
 			print-line "OK"
 		]
 		
@@ -2408,10 +2201,9 @@ collector: context [
 		;   - series header checks
 		;	- values series header checks
 		
-		; node frames checkings
-		;	- frame header sanity checks
-		;	- nodes free list checks
-		;	- node's value validity check (series pointers)
+		; node registry checkings
+		;	- bound entries and free list account for every handed out handle
+		;	- free list links name unbound entries only
 	
 		; check live values validity
 		; check all stack slot pointers validity

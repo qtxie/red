@@ -241,7 +241,6 @@ red: context [
 		actions/init
 		
 		;-- initialize memory before anything else
-		alloc-node-frame nodes-per-frame				;-- 10k nodes
 		alloc-series-frame								;-- first frame of 1MB
 
 		root:		block/make-fixed null ***-root-size

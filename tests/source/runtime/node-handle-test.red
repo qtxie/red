@@ -6,25 +6,6 @@ Red [
 #system [
 	#include %../../../quick-test/quick-test.reds
 
-	node-handle-delete-seen?: no
-	node-handle-delete-expected: 0
-
-	node-handle-delete-probe: func [
-		encoded [int-ptr!]
-		/local
-			stable [node-handle!]
-			node [node!]
-			s [series!]
-	][
-		stable: as node-handle! as-integer encoded
-		node: resolve-node stable
-		s: as series! node/value
-		node-handle-delete-seen?: all [
-			stable = node-handle-delete-expected
-			s/node = stable
-		]
-	]
-
 	~~~start-file~~~ "node handles"
 
 	===start-group=== "registry"
@@ -82,54 +63,105 @@ Red [
 		--assert (as-integer stack/get-values stack-offset) = as-integer stack-slot
 		--assert null? stack/get-values 0
 
-	--test-- "node-handle-compaction-and-reuse"
-		relocations: _hashtable/rs-init 16
-		destination-frame: alloc-node-frame nodes-per-frame
-		source-frame: alloc-node-frame nodes-per-frame
-		memory/n-active: source-frame
+	--test-- "node-handle-slot-is-registry-entry"
+		node: alloc-bytes 8
+		handle: node-handle-of node
+		slot: registry-slot handle
+		--assert slot = node									;-- the entry *is* the node record
+		--assert (as-integer resolve-node handle) = as-integer slot
+		series: as series! node/value
+		--assert series/node = handle
+		--assert (as-integer resolve-series handle) = as-integer series
+		--assert null? resolve-node 0							;-- an unbound handle names no node
 
+	--test-- "node-handle-chunk-growth"
+		chunks: node-registry/count
+		grown-node: alloc-bytes 8
+		grown-handle: node-handle-of grown-node
+		grown-slot: registry-slot grown-handle
+		registry-grow
+		--assert node-registry/count > chunks
+		--assert (as-integer registry-slot grown-handle) = as-integer grown-slot
+		--assert (as-integer resolve-node grown-handle) = as-integer grown-slot
+		chunk-a: node-registry/chunks
+		chunk-b: chunk-a + 1
+		boundary: chunk-a/slots + (registry-chunk-slots - 1)
+		--assert (as-integer registry-slot registry-chunk-slots) = as-integer boundary
+		--assert (as-integer registry-slot (registry-chunk-slots + 1)) = as-integer chunk-b/slots
+
+	--test-- "node-handle-release-and-reuse"
 		old-node: alloc-bytes 8
 		stable-handle: node-handle-of old-node
+		stable-slot: registry-slot stable-handle
+		--assert stable-slot = old-node
+		slot-address: as-integer stable-slot
 		holder: as red-binary! stack/push*
 		holder/header: TYPE_BINARY
 		holder/head: 0
 		holder/node: stable-handle
-		node-handle-delete-expected: stable-handle
-		node-handle-delete-seen?: no
-		external-type: externals/register "node-handle-test" as-integer :node-handle-delete-probe
-		external-id: externals/store as int-ptr! stable-handle external-type
-		external-record: externals/list + external-id
-		--assert external-record/handle = stable-handle
-		memory/n-active: destination-frame
-		collector/compact-node source-frame relocations
-
-		moved-node: resolve-node stable-handle
-		moved-series: as series! moved-node/value
-		--assert moved-node <> old-node
-		--assert holder/node = stable-handle
+		collector/do-cycle									;-- rooted, and compacted: the slot cannot move
+		moved: resolve-node stable-handle
+		--assert moved = stable-slot
+		--assert holder/node = stable-handle					;-- the cell keeps naming the same handle
+		moved-series: as series! moved/value
 		--assert moved-series/node = stable-handle
-		--assert (as-integer resolve-node stable-handle) = as-integer moved-node
 
-		_hashtable/rs-destroy relocations
+		external-type: externals/register-node "node-handle-test" null
+		external-id: externals/store-node stable-handle external-type
+		external-record: externals/list + external-id
+		--assert external-record/node = stable-handle			;-- a node record names an entry, never a buffer
+		--assert null? external-record/handle
+
+		used-before: node-registry/used
+		free-before: node-registry/free
 		holder/header: TYPE_UNSET
 		stack/pop 1
-		relocations: null
 		old-node: null
-		moved-node: null
+		stable-slot: null
+		moved: null
 		moved-series: null
-		source-frame: null
-		destination-frame: null
 		external-record: null
-		collector/do-cycle
+		collector/do-cycle									;-- unreachable: record and entry released together
 
-		--assert node-handle-delete-seen?
-		registry-entry: node-registry/entries + (stable-handle - 1)
-		--assert registry-entry/value = null
+		external-record: externals/list + external-id
+		--assert external-record/node = 0						;-- the sweep dropped the record...
+		--assert null? external-record/handle
+		--assert null? resolve-node stable-handle				;-- ...then the entry came loose
+		--assert node-registry/used < used-before
+		--assert node-registry/free <> free-before
 
+		on-free?: no
+		walk: node-registry/free
+		wlink: registry-link walk
+		steps: node-registry/next
+		while [all [walk > 0 steps > 0]][
+			if walk = stable-handle [on-free?: yes]
+			wlink: registry-link walk
+			walk: wlink/value
+			steps: steps - 1
+		]
+		--assert on-free?										;-- queued for reuse, nothing to rewrite
+
+		head: node-registry/free
 		reused-node: alloc-bytes 8
 		reused-handle: node-handle-of reused-node
-		--assert reused-handle = stable-handle
+		--assert reused-handle = head							;-- allocation takes the free-list head
+		--assert reused-node = registry-slot reused-handle
+		--assert (as-integer registry-slot reused-handle) = slot-address
 		--assert (as-integer resolve-node reused-handle) = as-integer reused-node
+		backref: as series! reused-node/value
+		--assert backref/node = reused-handle
+
+	--test-- "node-handle-used-accounting"						;-- runs last: every release above is counted
+		bound: 0
+		h: 1
+		p: registry-slot 1
+		while [h < node-registry/next][
+			p: registry-slot h
+			if p/value <> null [bound: bound + 1]
+			h: h + 1
+		]
+		--assert node-registry/used = bound						;-- memory-info reads only this counter
 
 	===end-group===
 

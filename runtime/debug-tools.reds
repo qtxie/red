@@ -22,6 +22,24 @@ print-symbol: func [
 ]
 
 ;-------------------------------------------
+;-- Count the entries of a registry chunk bound to a buffer
+;-------------------------------------------
+chunk-bound: func [
+	chunk	[registry-chunk!]
+	return:	[integer!]
+	/local slot end [ptr-ptr!] used [integer!]
+][
+	slot: chunk/slots
+	end: slot + registry-chunk-slots
+	used: 0
+	while [slot < end][
+		if slot/value <> null [used: used + 1]
+		slot: slot + 1
+	]
+	used
+]
+
+;-------------------------------------------
 ;-- Memory stats
 ;-------------------------------------------
 memory-info: func [
@@ -29,7 +47,7 @@ memory-info: func [
 	verbose [integer!]						;-- stat verbosity level (1, 2 or 3)
 	return:	[float!]						;-- total bytes used (verbose = 1)
 	/local
-		n-frame		[node-frame!]
+		chunk		[registry-chunk!]
 		s-frame		[series-frame!]
 		b-frame		[big-frame!]
 		list		[red-block!]
@@ -43,6 +61,7 @@ memory-info: func [
 		total heap	[float!]
 		saved		[logic!]
 		len			[integer!]
+		k bound		[integer!]
 		push-value	[subroutine!]
 ][
 	saved: collector/active?
@@ -50,23 +69,24 @@ memory-info: func [
 	assert all [1 <= verbose verbose <= 3]
 	used: total: 0.0
 
-;-- Node frames stats --
+;-- Node registry stats --
 	if verbose > 1 [nodes: block/make-in blk 8]
-	n-frame: memory/n-head
+	if verbose = 1 [used: used + as-float (node-registry/used * size? node!)]
 
-	while [n-frame <> null][
-		if verbose = 1 [
-			used: used + as-float n-frame/used * size? node!
-		]
-		if verbose >= 2 [
+	if verbose >= 2 [										;-- one record per chunk, no per-entry walk at level 1
+		k: node-registry/count
+		chunk: node-registry/chunks
+		while [k > 0][
+			bound: chunk-bound chunk
 			list: block/make-in nodes 8
-			integer/make-in list n-frame/nodes - n-frame/used
-			integer/make-in list n-frame/used
-			integer/make-in list n-frame/nodes
+			integer/make-in list registry-chunk-slots - bound
+			integer/make-in list bound
+			integer/make-in list registry-chunk-slots
 			list/header: list/header or flag-new-line
-			total: total + as-float ((n-frame/nodes * size? node!) + size? node-frame!)
+			total: total + as-float (registry-chunk-slots * ((size? node!) + size? integer!))
+			chunk: chunk + 1
+			k: k - 1
 		]
-		n-frame: n-frame/next
 	]
 
 ;-- Series frames stats --
@@ -249,27 +269,28 @@ memory-info: func [
 	;-------------------------------------------
 	memory-stats: func [
 		verbose [integer!]						;-- stat verbosity level (1, 2 or 3)
-		/local count n-frame s-frame b-frame base
+		/local count chunk bound s-frame b-frame base
 	][
 		assert all [1 <= verbose verbose <= 3]
 		
 		print [lf "====== Red Memory Stats ======" lf]
 
-	;-- Node frames stats --
+	;-- Node registry stats --
 		count: 0
-		n-frame: memory/n-head
+		chunk: node-registry/chunks
 		
-		print [lf "-- Node frames --" lf]
-		while [n-frame <> null][
+		print [lf "-- Node registry --" lf]
+		while [count < node-registry/count][
 			if verbose >= 2 [
+				bound: chunk-bound chunk
 				print ["#" count + 1 ": "]
 				frame-stats 
-					n-frame/nodes - n-frame/used
-					n-frame/used
-					n-frame/nodes
+					registry-chunk-slots - bound
+					bound
+					registry-chunk-slots
 			]
 			count: count + 1
-			n-frame: n-frame/next
+			chunk: chunk + 1
 		]
 		print-frames-count count
 		

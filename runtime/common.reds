@@ -769,8 +769,6 @@ cycles: context [
 	
 	reset: does [top: bottom]
 	
-	refresh: does []										;-- stable handles do not move
-	
 	find?: func [node [node-handle!] return: [logic!] /local p [int-ptr!]][
 		if top = bottom [return no]
 		p: bottom

@@ -56,6 +56,11 @@
 - Dev-mode unit binaries run `libRedRT.dll` beside them - delete it or the output dir, or they measure the old runtime
 - `hashtable!` names its five buffers by `node-handle!`: marking a table reads the header and never rewrites it (`collector/keep-handle` takes a handle, `keep` the slot holding one)
 - `hashtable!/stride` is CELLS per node-key entry; `put-key`'s `alloc-tail-unit` wants bytes - redbin-codec/money/reactivity only catch a wrong size, and only at `RED_GC_STRESS=500`
+- The registry entry *is* the node record: `node!` is a slot address, so a reference is handle -> buffer, not handle -> node -> buffer. Chunks of `registry-chunk-slots` (8192) slots are `allocate-virtual` and never move, merge or compact; only the chunk table reallocs
+- Node frames are gone (`node-frame!`, `alloc-node-frame`, `compact-node`, `do-node-cycle`, `collect-node-frames`, the `refs` relocation map, `stats/nodes-cycles`) - a raw `node!` stays valid across any number of cycles, so nothing needs rewriting
+- `node-registry/used` is the O(1) live-entry count `memory-info` reads at verbose 1; `debug-tools/chunk-bound` and `collector/check-registry` are the per-chunk / free-list walks
+- A `-d` build of a Red program reaches only the symbols listed in `system/utils/libRedRT-exports.red`; a test of runtime internals (`registry-slot`, `node-registry`, ...) must be built `-r`, which embeds the runtime
+- A callback written in user code and stored via `externals/register`/`register-node` never runs when the *runtime* dispatches it in a release build of a Red program (both the native and node path) - don't gate on observing it
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps

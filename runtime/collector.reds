@@ -42,6 +42,7 @@ collector: context [
 		moved-bytes  [integer!]							;-- payload bytes relocated
 		stack-slots  [integer!]							;-- conservative stack words examined
 		stack-roots  [integer!]							;-- stack words that rooted a series
+		queue-peak	 [integer!]							;-- widest marking queue, in cell ranges
 	]
 	
 	ext-size: 100
@@ -50,6 +51,19 @@ collector: context [
 	
 	refs: as int-ptr! 0
 	refs-size: 20000
+
+	;-- Marking worklist: pairs of (head tail) cell pointers still to walk.
+	;-- Marking used to recurse through one native frame per nesting level, so a
+	;-- deep block chain was a stack overflow with no diagnostic, and the mark
+	;-- phase could not be resumed. Depth is now bounded by this buffer, which
+	;-- the allocator owns as raw memory: a managed series would be relocated by
+	;-- the compaction that follows marking.
+	mark-queue: context [
+		list:  as ptr-ptr! 0							;-- (head tail) pairs
+		count: 0										;-- ranges waiting to be walked
+		size:  0										;-- allocated ranges
+	]
+	walking?: no										;-- a drain owns the queue
 
 
 	indent: 0
@@ -779,6 +793,54 @@ collector: context [
 		s: resolve-series handle
 		s/flags: s/flags and not (flag-gc-mark or flag-gc-scan)
 	]
+
+	;-- Queue a range of cells for the marking walk, growing the buffer on
+	;-- demand. A nested block costs two words here instead of a native frame,
+	;-- so mark depth is a heap property, not a stack one.
+	queue-range: func [
+		value [red-value!]
+		tail  [red-value!]
+		/local pos [ptr-ptr!]
+	][
+		if value >= tail [exit]
+		if null? mark-queue/list [
+			mark-queue/size: 256
+			mark-queue/list: as ptr-ptr! allocate mark-queue/size * 2 * size? int-ptr!
+		]
+		if mark-queue/count >= mark-queue/size [
+			mark-queue/size: mark-queue/size * 2
+			mark-queue/list: as ptr-ptr! realloc as byte-ptr! mark-queue/list mark-queue/size * 2 * size? int-ptr!
+		]
+		pos: mark-queue/list + (mark-queue/count * 2)
+		pos/value: as int-ptr! value
+		pos: pos + 1
+		pos/value: as int-ptr! tail
+		mark-queue/count: mark-queue/count + 1
+		if mark-queue/count > stats/queue-peak [stats/queue-peak: mark-queue/count]
+	]
+
+	;-- Walk the queue to empty. Every mark-* function bottoms out here, so a
+	;-- re-entrant caller only queues work while a walk is already running and
+	;-- the outermost call is the one that drains. LIFO order keeps the walk
+	;-- depth-first, as the recursion was.
+	drain-mark-queue: func [
+		/local
+			value [red-value!]
+			tail  [red-value!]
+			pos   [ptr-ptr!]
+	][
+		if walking? [exit]
+		walking?: yes
+		while [mark-queue/count > 0][
+			mark-queue/count: mark-queue/count - 1
+			pos: mark-queue/list + (mark-queue/count * 2)
+			value: as red-value! pos/value
+			pos: pos + 1
+			tail: as red-value! pos/value
+			walk-values value tail
+		]
+		walking?: no
+	]
 	
 	mark-context: func [
 		ptr		[int-ptr!]
@@ -810,6 +872,14 @@ collector: context [
 	]
 
 	mark-values: func [
+		value [red-value!]
+		tail  [red-value!]
+	][
+		queue-range value tail
+		drain-mark-queue
+	]
+
+	walk-values: func [
 		value [red-value!]
 		tail  [red-value!]
 		/local
@@ -1919,6 +1989,7 @@ collector: context [
 		print-line ["  moved bytes   : " stats/moved-bytes]
 		print-line ["  stack slots   : " stats/stack-slots]
 		print-line ["  stack roots   : " stats/stack-roots]
+		print-line ["  mark queue    : " stats/queue-peak " ranges peak / " mark-queue/size " allocated"]
 		print-line ["  pinned (last) : " stats/pinned-frames " frames / " stats/pinned-bytes " bytes"]
 		free as byte-ptr! buf
 	]
@@ -1979,6 +2050,13 @@ collector: context [
 		][
 			do-node-cycle
 		]
+		;-- A walk that ended early would leave ranges queued and the next cycle
+		;-- marking from a stale stack; marking itself cannot unwind, so this is
+		;-- a tripwire rather than a recovery.
+		#if debug? = yes [assert mark-queue/count = 0]
+		walking?: no
+		mark-queue/count: 0
+
 		mark-block root
 		#if debug? = yes [if verbose > 1 [probe "marking symbol table"]]
 		p: as int-ptr! symbol/table

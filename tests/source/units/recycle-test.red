@@ -821,6 +821,46 @@ Red [
 
 ===end-group===
 
+===start-group=== "deep marking"
+
+	;-- Nesting depth is a heap property of the collector, not a stack one.
+	;-- Marking spent a native frame per level, so a collection meeting a chain
+	;-- this deep died on the stack instead of marking it. The walk back down is
+	;-- iterative, so the test cannot be the thing that overflows.
+	--test-- "deep-marking-chain"
+		dm-depth: 50000
+		dm-chain: copy [12345]
+		loop dm-depth [dm-chain: reduce [dm-chain]]
+		dm-root: dm-chain
+		recycle
+		
+		dm-level: 0
+		dm-cur: dm-root
+		while [all [block? :dm-cur 1 = length? :dm-cur block? dm-cur/1]][
+			dm-cur: dm-cur/1
+			dm-level: dm-level + 1
+		]
+		--assert dm-level = dm-depth
+		--assert all [block? :dm-cur 1 = length? :dm-cur 12345 = dm-cur/1]
+		
+	;-- Both halves of the marking protocol still hold with a queue: a cycle
+	;-- terminates the walk, and compaction keeps a self-reference self-referencing.
+	--test-- "deep-marking-cycle"
+		dmc-self: copy []
+		append/only dmc-self dmc-self
+		dmc-n: 3000
+		dmc-cur: dmc-self
+		loop dmc-n [dmc-cur: reduce [dmc-cur]]
+		dmc-root: dmc-cur
+		recycle
+		
+		dmc-cur: dmc-root
+		loop dmc-n [dmc-cur: first dmc-cur]
+		--assert same? dmc-cur dmc-self
+		--assert same? first dmc-cur dmc-cur
+
+===end-group===
+
 ===start-group=== "recycle issues"
 
 	#if config/target <> 'ARM [

@@ -47,6 +47,15 @@ collector: context [
 		probe-roots  [integer!]							;-- handles the range probe rooted that it did not
 		probe-new    [integer!]							;-- of those, ones nothing else had marked yet
 		probe-alias  [integer!]							;-- hits rejected: the word is wider than an index
+		gap-words	 [integer!]							;-- words below a frame's declared slots examined
+		gap-frames	 [integer!]							;-- frames whose window was walked at all
+		gap-stores	 [integer!]							;-- of those, ones recorded for rewriting
+		gap-pins	 [integer!]							;-- of those, ones that pinned a series frame
+		gap-depth	 [integer!]							;-- deepest recorded word, in slots below the locals
+		gap-scan	 [integer!]							;-- deepest word walked, same measure
+		gap-bound	 [integer!]							;-- frames whose walk stopped at their own bottom
+		gap-unpub	 [integer!]							;-- frames whose record published no bound
+		gap-refused  [integer!]							;-- published bounds that contradicted the callee
 	]
 	
 	ext-size: 100
@@ -175,6 +184,15 @@ collector: context [
 		stats/probe-roots:		0
 		stats/probe-new:		0
 		stats/probe-alias:		0
+		stats/gap-words:		0
+		stats/gap-frames:		0
+		stats/gap-stores:		0
+		stats/gap-pins:			0
+		stats/gap-depth:		0
+		stats/gap-scan:			0
+		stats/gap-bound:		0
+		stats/gap-unpub:		0
+		stats/gap-refused:		0
 		prefs/nodes-gc-trigger: 5						;-- trigger if node frame is unchanged after 5 cycles
 		stress?: read-stress-env :stress-period
 		stats?:  read-stats-env
@@ -1610,6 +1628,9 @@ collector: context [
 			s [series!]
 			bits slot-bits idx disp nb arg-slots local-slots slots handle h n [integer!]
 			hw hbits [integer!]
+			depth pinned-before below word [integer!]
+			stop [ptr-ptr!]
+			gap-word [int-ptr!]
 			ext? dyn? in-lib? named? [logic!]
 	][
 		c-low: system/image/base + system/image/code
@@ -1896,11 +1917,45 @@ collector: context [
 						prev > as ptr-ptr! system/stack/top
 						prev < frm
 					][prev][as ptr-ptr! system/stack/top]
+					;-- The record's trailing word says how far this frame reaches below
+					;-- its declared slots, so the walk stops at the frame's own bottom
+					;-- instead of at whatever the callee left. A published depth is
+					;-- tagged (stack-bitmap/GAP-TAG): a table written before gap words
+					;-- offers the argument count of the record after it at that place,
+					;-- and that count is always zero, so it reads as nothing published.
+					;-- A depth reaching below where the callee's frame starts is refused
+					;-- too, so a published bound can only shorten this walk, never
+					;-- misplace it.
+					gap-word: head + 1 + (hw * 2)
+					word: gap-word/value
+					below: either (word and 40000000h) <> 0 [word and 3FFFFFFFh][-1]
+					stop: either below >= 0 [frm - (4 + arg-slots + local-slots + below)][null]
+					either all [stop <> null stop >= slot][
+						slot: stop
+						stats/gap-bound: stats/gap-bound + 1
+					][
+						either null? stop [stats/gap-unpub: stats/gap-unpub + 1][
+							stats/gap-refused: stats/gap-refused + 1
+						]
+					]
+					depth: 0
 					while [sp > slot][
 						sp: sp - 1
+						depth: depth + 1
+						stats/gap-words: stats/gap-words + 1
 						entry: refs
+						pinned-before: frames-list/pinned/count
 						refs: mark-stack-candidate sp store? no refs
-						if refs <> entry [nb: nb + 1]
+						if any [refs <> entry  frames-list/pinned/count > pinned-before][
+							if frames-list/pinned/count > pinned-before [stats/gap-pins: stats/gap-pins + 1]
+							if refs <> entry [stats/gap-stores: stats/gap-stores + 1]
+							nb: nb + 1
+							if depth > stats/gap-depth [stats/gap-depth: depth]
+						]
+					]
+					if depth > 0 [
+						stats/gap-frames: stats/gap-frames + 1
+						if depth > stats/gap-scan [stats/gap-scan: depth]
 					]
 				]
 				#if target = 'IA-32 [
@@ -2059,6 +2114,8 @@ collector: context [
 		print-line ["  stack roots   : " stats/stack-roots]
 		print-line ["  handle slots  : " stats/handle-bits " bitmap-named, " stats/probe-roots " probed (" stats/probe-new " nothing else rooted)"]
 		print-line ["  probe aliases : " stats/probe-alias " words too wide to be an index"]
+		print-line ["  gap slots     : " stats/gap-words " examined over " stats/gap-frames " frames (deepest " stats/gap-scan "), " stats/gap-stores " recorded / " stats/gap-pins " pinned (deepest hit " stats/gap-depth ")"]
+		print-line ["  gap bound     : " stats/gap-bound " frames stopped at their own bottom, " stats/gap-refused " refused, " stats/gap-unpub " with no published depth"]
 		print-line ["  mark queue    : " stats/queue-peak " ranges peak / " mark-queue/size " allocated"]
 		print-line ["  pinned (last) : " stats/pinned-frames " frames / " stats/pinned-bytes " bytes"]
 		free as byte-ptr! buf

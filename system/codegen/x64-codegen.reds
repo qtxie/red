@@ -86,6 +86,7 @@ machine-state!: alias struct! [
 	depth                   [integer!]
 	max-depth               [integer!]
 	max-outgoing            [integer!]
+	dynamic-stack?          [logic!]	;-- rsp leaves the frame at run time
 	current-entry           [integer!]
 	fallthrough?            [logic!]
 	; What a machine register still holds, and what may still be folded into the
@@ -3001,12 +3002,15 @@ x64-codegen: context [
 		/local task [codegen-task!] module [rsir-module!] fn [rsir-function!]
 			parameter [rsir-parameter!] offsets [int-ptr!]
 			index displacement width [integer!] inline? [logic!]
+			state [machine-state!] record [int-ptr!] below reach [integer!]
 	][
 		task: context/task
 		module: context/module
+		state: context/state
 		fn: task/fn
 		offsets: context/scratch/storage-offsets
-		stack-bitmap/initialize task/bitmap task/bitmap-slots
+		record: task/bitmap
+		stack-bitmap/initialize record task/bitmap-slots
 		index: 1
 		while [index <= (fn/parameter-count + fn/local-count)][
 			displacement: offsets/index
@@ -3018,11 +3022,31 @@ x64-codegen: context [
 					inline? index <= fn/parameter-count
 					inline-home-indirect? parameter/type module/table
 				][inline?: false]
-				unless mark-bitmap-type task/bitmap parameter/type inline?
+				unless mark-bitmap-type record parameter/type inline?
 					displacement 0 module/table [return false]
 			]
 			index: index + 1
 		]
+		;-- The frame reaches below its last declared slot: call results, tags, catch
+		;-- records and expression temporaries are laid out under the storage the
+		;-- streams above count, and the frame's own reservation is exactly where that
+		;-- ends -- the return address and the callee's saved frame sit past it, and
+		;-- belong to frames the walk visits on its way up. Every pointer written down
+		;-- there is a copy whose live original sits in a declared slot or a cell, so
+		;-- the collector rewrites it without rooting from it, and it can stop at the
+		;-- frame's bottom now that the depth is published rather than guess it from
+		;-- the callee's address.
+		;-- Two kinds of frame keep the guess: one that moves rsp itself, since nothing
+		;-- static bounds what it writes down there, and one that hosts a sub-function,
+		;-- which shifts rsp past the bottom for its own argument area.
+		reach: task/frame-size - x64-encoder/BASE_FRAME_SIZE - (task/bitmap-slots * 8)
+		below: either any [
+			state/dynamic-stack?
+			state/sub-entry-count > 0
+			reach < 0
+			reach > 2147483646
+		][-1][(reach + 7) / 8]
+		stack-bitmap/publish record below
 		true
 	]
 
@@ -4807,6 +4831,7 @@ x64-codegen: context [
 		state/main-entry-count: 0
 		state/sub-entry-count: 0
 		state/unstable-stack?: false
+		state/dynamic-stack?: false
 		state/last-math-operation: 0
 		state/flags-condition: -1
 		state/pending-immediate-index: -1
@@ -4931,6 +4956,18 @@ x64-codegen: context [
 					all [instruction/a >= 5 instruction/a <= 12]
 				]
 			][state/unstable-stack?: true]
+			;-- A narrower set: these move rsp below the frame, where no plan prices
+			;-- the room, so the frame's reach stops being a static fact.
+			if all [
+				live?
+				instruction/op = OP_NATIVE
+				any [
+					instruction/a = 2							;-- system/stack/push
+					instruction/a = 5							;-- system/stack/top:
+					instruction/a = 11							;-- system/stack/push-all
+					all [instruction/a >= 7 instruction/a <= 9]	;-- align, allocate
+				]
+			][state/dynamic-stack?: true]
 			if all [
 				live?
 				instruction/op = OP_NATIVE

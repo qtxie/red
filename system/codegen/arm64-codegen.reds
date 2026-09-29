@@ -57,6 +57,7 @@ arm64-function-plan!: alias struct! [
 	frame-allocation [integer!]
 	bitmap-index    [integer!]
 	bitmap-slots    [integer!]
+	dynamic-stack?  [logic!]			;-- sp leaves the frame at run time
 ]
 
 arm64-layout-state!: alias struct! [
@@ -2982,6 +2983,7 @@ arm64-codegen: context [
 			inline-size inline-align
 				[integer!]
 			fallthrough? stack-all? frame-anchor? escape? [logic!]
+			dynamic-stack? [logic!]
 	][
 		status: prepare-exception-structure view fn first-instruction unwind?
 			scratch plan
@@ -3046,6 +3048,7 @@ arm64-codegen: context [
 		;-- spills only around OP_SUB_CALL, so those sites count 2 and 1.
 		spill-cost: 0
 		stack-all?: false
+		dynamic-stack?: false
 		frame-anchor?: false
 		home-mask: 0
 		home-count: 0
@@ -3354,6 +3357,17 @@ arm64-codegen: context [
 						instruction/a >= STACK_TOP_NATIVE
 						instruction/a <= STACK_FREE_NATIVE
 					][has-call: 1]
+					;-- The narrower set that moves SP below the frame, where no plan
+					;-- prices the room: the frame's reach stops being a static fact.
+					if any [
+						instruction/a = STACK_PUSH_NATIVE
+						instruction/a = STACK_TOP_SET_NATIVE
+						instruction/a = STACK_PUSH_ALL_NATIVE
+						all [
+							instruction/a >= STACK_ALIGN_NATIVE
+							instruction/a <= STACK_ALLOCATE_ZERO_NATIVE
+						]
+					][dynamic-stack?: true]
 					if all [
 						any [
 							instruction/a = CPU_REGISTER_NATIVE
@@ -3955,6 +3969,7 @@ arm64-codegen: context [
 		plan/frame-home-count: frame-home-count
 		plan/spill-count: max-spill
 		plan/has-call: has-call
+		plan/dynamic-stack?: dynamic-stack?
 		if plan/frame-anchor-register <> arm64-encoder/FP [
 			mask: 1 << (plan/frame-anchor-register - FIRST_HOME_REGISTER)
 			slot: 0
@@ -4204,6 +4219,7 @@ arm64-codegen: context [
 		fn [rsir-function!] scratch [arm64-function-scratch!] plan [arm64-function-plan!]
 		return: [logic!]
 		/local index [integer!] slot [integer!] parameter [rsir-parameter!]
+			below [integer!]
 	][
 		stack-bitmap/initialize record plan/bitmap-slots
 		; Saved GPRs belong to the caller, whose types are unknown here, so they
@@ -4232,6 +4248,17 @@ arm64-codegen: context [
 			]
 			index: index + 1
 		]
+		;-- What the frame reserves below its last counted slot. Unlike x64, where a
+		;-- call shifts rsp past the frame, the argument area a call hands over is
+		;-- priced into frame-allocation itself, so the frame-enter sub lands exactly
+		;-- on the frame's bottom and this depth needs no rounding. Publishing it lets
+		;-- the collector stop at the frame's own bottom rather than at the callee's.
+		;-- A frame that moves sp itself keeps the guess: nothing static bounds what
+		;-- it writes down there.
+		below: either plan/dynamic-stack? [-1][
+			plan/frame-allocation / 8 - (plan/bitmap-slots + 4)
+		]
+		stack-bitmap/publish record below
 		true
 	]
 

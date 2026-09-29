@@ -18,15 +18,15 @@
 
 ## Current Baselines
 
+- **hybrid-compiler291.exe** (290->291, 6571008 bytes, fixed point): a bitmap record publishes, in a tagged trailing word, how far its frame reaches below the slots it counts
 - **hybrid-compiler282.exe** (281->282, 6549504 bytes, fixed point): the frame bitmap carries a handle stream beside the pointer one
 - **hybrid-compiler279.exe** (278->279, 6532608 bytes, fixed point): node-handle! is a typed RSIR scalar, folded to integer! by both backends
-- **hybrid-compiler265.exe** (264->265, 6523904 bytes, fixed point at 266): ARM64 deep expression stack support
 - Compare generated output, not compiler image (build date shifts addresses)
 - Use equal-length output names when comparing generations (embedded path affects size)
 
 ## Test Suites
 
-- Red/System suite: 10600 tests / 12736 assertions / 0 failed (Windows x64)
+- Red/System suite: 10601 tests / 12747 assertions / 0 failed (Windows x64)
 - Red suite: 9305 tests / 18001 assertions / 0 failed (all platforms)
 - View headless: 148 tests / 249 assertions / 0 failed
 - Native View (Windows): 107 tests / 507 assertions / 0 failed

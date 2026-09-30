@@ -21,9 +21,9 @@
 
 ## Current Baselines
 
+- **hybrid-compiler293.exe** (292->293, 6577664 bytes, fixed point): the pairs the stack scan sorts are counted off the write cursor, so the sorted span and the relocated span cannot drift apart
 - **hybrid-compiler291.exe** (290->291, 6571008 bytes, fixed point): a bitmap record publishes, in a tagged trailing word, how far its frame reaches below the slots it counts
 - **hybrid-compiler282.exe** (281->282, 6549504 bytes, fixed point): the frame bitmap carries a handle stream beside the pointer one
-- **hybrid-compiler279.exe** (278->279, 6532608 bytes, fixed point): node-handle! is a typed RSIR scalar, folded to integer! by both backends
 - Compare generated output, not compiler image (build date shifts addresses)
 - Use equal-length output names when comparing generations (embedded path affects size)
 

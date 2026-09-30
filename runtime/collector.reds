@@ -191,13 +191,25 @@ collector: context [
 		len > 0											;-- presence only: any value switches it on
 	]
 
-	check-abi: does [
-		;-- Startup invariant check. The one thing `#if` cannot express today is a
-		;-- compile-time size assertion -- the preprocessor only knows its own
-		;-- symbols, not `size?` -- so the value-cell contract is checked once at
-		;-- init instead. It is what catches a struct whose width silently changed
-		;-- on one target (the macOS-arm64 float32!/float! case) and moved every
-		;-- stack slot the pointer bitmap describes with it.
+	check-abi: func [
+		/local
+			s				[series-buffer!]
+			arch			[integer!]
+			p-node			[integer!]
+			p-size			[integer!]
+			p-offset		[integer!]
+			p-tail			[integer!]
+	][
+		;-- Startup invariant checks. The one thing `#if` cannot express today is a
+		;-- compile-time size assertion -- the preprocessor only knows its own symbols,
+		;-- not `size?` -- so the layout the collector hard-codes is checked once at
+		;-- init instead. It is what catches a struct whose width silently changed on
+		;-- one target (the macOS-arm64 float32!/float! case) and moved every stack
+		;-- slot the pointer bitmap describes with it. No Red expression is evaluated
+		;-- before these run, so no build of no target can pass a test suite over a
+		;-- broken layout: its first run names the width that disagrees.
+		arch: size? int-ptr!
+
 		unless size? cell! = 16 [
 			print-line ["*** ABI violation: size? cell! = " size? cell! ", expected 16"]
 			quit -1
@@ -216,6 +228,64 @@ collector: context [
 			size? red-word!		= 16
 		][
 			print-line ["*** ABI violation: a value cell is not 16 bytes"]
+			quit -1
+		]
+
+		;-- A registry entry *is* the node: the slot a buffer pointer is stored in.
+		;-- The collector rounds a candidate down to one with `size? node! - 1`, which
+		;-- only describes an entry while that width is a pointer, and a power of two.
+		unless size? node! = arch [
+			print-line ["*** ABI violation: size? node! = " size? node! ", expected " arch]
+			quit -1
+		]
+
+		;-- A handle names its entry by shifting and masking, so the three chunk
+		;-- constants have to describe one power-of-two slot count. They are separate
+		;-- `#define`s in definitions.reds and nothing else checks they agree.
+		unless all [
+			registry-chunk-slots = (1 << registry-chunk-log)
+			registry-chunk-mask = (registry-chunk-slots - 1)
+		][
+			print-line [
+				"*** ABI violation: registry chunk of " registry-chunk-slots
+				" slots, log " registry-chunk-log ", mask " registry-chunk-mask
+			]
+			quit -1
+		]
+
+		;-- Buffer headers are read by position, not by name, wherever the collector
+		;-- walks the heap: `node` is the handle the bitmap's second stream marks,
+		;-- `offset` and `tail` the cell pointers it roots. So what is asserted here is
+		;-- adjacency and alignment, not a width per target. The 64-bit builds measure
+		;-- fields at 4/8/16/24 in a 32-byte header; a 32-bit one would measure
+		;-- 4/8/12/16 in a 20-byte one, and no target this compiler can build would ever
+		;-- see that number checked, so nothing states it.
+		s: declare series-buffer!
+		p-node:		(as integer! :s/node)		- (as integer! s)
+		p-size:		(as integer! :s/size)		- (as integer! s)
+		p-offset:	(as integer! :s/offset)	- (as integer! s)
+		p-tail:		(as integer! :s/tail)		- (as integer! s)
+		unless all [
+			p-node = 4
+			p-size = 8
+			p-offset >= 12								;-- three words of flags, minimum
+			(p-offset - 12) < arch						;-- padding only, no fifth field
+			zero? (p-offset and (arch - 1))				;-- and the pointers are aligned
+			p-tail = (p-offset + arch)					;-- the two cell pointers, adjacent
+			size? series-buffer! = (p-tail + arch)		;-- with nothing after them
+		][
+			print-line [
+				"*** ABI violation: series-buffer! is " size? series-buffer! " bytes"
+				", fields at " p-node "/" p-size "/" p-offset "/" p-tail
+			]
+			quit -1
+		]
+
+		;-- The nursery age stamp shares the flags word with the unit field. A datatype
+		;-- restamps the unit with `flag-unit-mask`, which has to leave bits 5-7 alone,
+		;-- so the two fields must not overlap.
+		unless zero? (flag-age-mask and get-unit-mask) [
+			print-line ["*** ABI violation: the age stamp overlaps the unit field"]
 			quit -1
 		]
 	]

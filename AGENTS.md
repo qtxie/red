@@ -12,6 +12,7 @@
 - Windows has two targets: `MSDOS-X86-64` (CLI, subsystem 3) and `Windows-X86-64` (GUI, subsystem 2, needs `Needs: View`)
 - Use `windows-target?` to check Windows family (not `find target "Windows"`)
 - Target registry: `system/target-registry.red` is the only place targets are declared
+- The hybrid compiler builds only Windows X86-64, Darwin-ARM64 and Linux X86-64/ARM64 - `-t MSDOS` and any IA-32/ARM name is refused as "unknown compilation target", so a 32-bit layout can never be observed here
 - Toolchain resources are generated at build time in `build/generated/red-toolchain-resources.generated.red` - always regenerate before building toolchain
 - Use `build-red-toolchain.red` which regenerates automatically
 - Delete entire output directory (not just libRedRT.dll) to force runtime rebuild
@@ -71,6 +72,7 @@
 - `gen/*` sums are `float!` on purpose - a cumulative `integer!` wraps (recycle-test passed a billion live buffer-bytes in 400 cycles) and the ratios printed from it become lies
 - Cumulative GC counters are NOT comparable across builds: three builds of one source put recycle-test's gap-pin total at 2, 0 and 1, because the unit's own code addresses feed the conservative scan. Only per-cycle decisions (`pin causes`/`pin evidence`) and assertion counts survive a rebuild; within one binary the counters are stable across runs
 - Only the main thread allocates: the camera capture callbacks run on a foreign thread and touch no Red heap - Windows copies the sample into a `RedGrabberCB/stg` buffer the main thread `allocate`d and handshakes on an atomic `state`, macOS parks the JPEG `NSData` in an associated object for `snap-camera` to build the cell from. `collector/running?` was a TOCTOU over an unsynchronised two-writer bump pointer, not a guard (proposal P6)
+- Red/System cannot state a compile-time size assertion: `#if`/`#either` see preprocessor symbols only, so `#either size? cell! = 16 [...]` is "unsupported issue literal". `collector/check-abi` asserts the layout at startup instead (cell! and its seven aliases, node-handle!, node! against the pointer width, the series-buffer! field shape, the registry-chunk `#define`s, the age stamp against the unit field) - it runs before any Red evaluation, so a broken layout aborts the first run on that target naming the number (proposal P8)
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps

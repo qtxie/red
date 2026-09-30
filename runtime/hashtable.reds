@@ -685,6 +685,7 @@ _hashtable: context [
 			type key [integer!]
 			vsize [integer!]
 	][
+		if null? table [exit]					;-- the caller resolves the handle; null means the table is gone
 		s: as series! table/value
 		h: as hashtable! s/offset
 
@@ -700,17 +701,20 @@ _hashtable: context [
 				key: val/data1
 				assert HANDLE?(key)
 				node: resolve-node key
-				s: as series! node/value
-				either s/flags and flag-gc-mark = 0 [
-					delete-key table key
-					val/data1: 0
-				][
-					if type = HASH_TABLE_OWNERSHIP [
-						obj: as red-object! val + 2	;-- check owner
-						s: resolve-series obj/ctx
-						if s/flags and flag-gc-mark = 0 [
-							delete-key table key
-							val/data1: 0
+				if all [node <> null node/value <> null][	;-- as in mark: a stale handle is not a live key,
+															;-- and reading it would be address zero
+					s: as series! node/value
+					either s/flags and flag-gc-mark = 0 [
+						delete-key table key
+						val/data1: 0
+					][
+						if type = HASH_TABLE_OWNERSHIP [
+							obj: as red-object! val + 2	;-- check owner
+							s: resolve-series obj/ctx
+							if s/flags and flag-gc-mark = 0 [
+								delete-key table key
+								val/data1: 0
+							]
 						]
 					]
 				]

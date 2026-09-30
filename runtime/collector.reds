@@ -57,6 +57,8 @@ collector: context [
 		moved-bytes  [integer!]							;-- payload bytes relocated
 		stack-slots  [integer!]							;-- conservative stack words examined
 		stack-roots  [integer!]							;-- stack words that rooted a series
+		stk-pairs	 [integer!]							;-- (value, slot) pairs the stack scan stored
+		stk-rewrites [integer!]							;-- pairs the relocation sweep rewrote
 		resolve-calls [integer!]						;-- interior pointers handed to find-series-owner
 		resolve-steps [integer!]						;-- published extent words searched to answer them (cumulative)
 		run-headers  [integer!]							;-- series headers read to publish runs this cycle (last)
@@ -308,6 +310,8 @@ collector: context [
 		stats/moved-bytes:		0
 		stats/stack-slots:		0
 		stats/stack-roots:		0
+		stats/stk-pairs:		0
+		stats/stk-rewrites:		0
 		stats/resolve-calls:	0
 		stats/resolve-steps:	0
 		stats/run-peak:			0
@@ -1749,6 +1753,7 @@ collector: context [
 							ptr: refs + 1
 							ptr: as ptr-ptr! ptr/value
 							ptr/value: as int-ptr! (dst + (as-integer (as byte-ptr! ptr/value) - src))
+							stats/stk-rewrites: stats/stk-rewrites + 1
 							refs: refs + 2
 						]
 					]
@@ -1886,6 +1891,7 @@ collector: context [
 							ptr: refs + 1
 							ptr: as ptr-ptr! ptr/value
 							ptr/value: as int-ptr! (dst2 + (as-integer (as byte-ptr! ptr/value) - src))
+							stats/stk-rewrites: stats/stk-rewrites + 1
 							;probe ["(x-compact) update pointer " as int-ptr! refs/1 " on stack at: " ptr]
 							refs: refs + 2
 						]
@@ -1983,7 +1989,6 @@ collector: context [
 		]
 		frm: as ptr-ptr! system/stack/frame
 		refs: memory/stk-refs
-		nb: 0
 		tail: refs + (memory/stk-sz * 2)
 		base: bitarrays-base
 		base': lib-bitarrays-base						;-- points to libRedRT's bitmap array
@@ -2117,9 +2122,7 @@ collector: context [
 									]
 								]
 								if bits and 1 <> 0 [	;-- check if the slot is a pointer
-									entry: refs
 									refs: mark-stack-candidate sp store? yes refs
-									if refs <> entry [nb: nb + 1]
 								]
 								bits: bits >>> 1		;-- next slot flag
 							]
@@ -2168,7 +2171,6 @@ collector: context [
 														new: refs + 1
 														new/value: as int-ptr! sp
 														refs: refs + 2
-														nb: nb + 1
 													]
 												]
 												true [0]
@@ -2218,7 +2220,6 @@ collector: context [
 														new: refs + 1
 														new/value: as int-ptr! sp
 														refs: refs + 2
-														nb: nb + 1
 													]
 												]
 												true [0]
@@ -2289,7 +2290,6 @@ collector: context [
 						if any [refs <> entry  frames-list/pinned/count > pinned-before][
 							if frames-list/pinned/count > pinned-before [stats/gap-pins: stats/gap-pins + 1]
 							if refs <> entry [stats/gap-stores: stats/gap-stores + 1]
-							nb: nb + 1
 							if depth > stats/gap-depth [stats/gap-depth: depth]
 						]
 					]
@@ -2332,16 +2332,16 @@ collector: context [
 		]
 		memory/stk-tail: refs
 
-		if all [store? nb > 0][
+		;-- The count to sort has to be the number of pairs *stored*: qsort swaps
+		;-- every pair it covers, while the relocation sweep in compact-series-frame
+		;-- stops at stk-tail. Sorting one pair too many carries a live (value, slot)
+		;-- pair past that bound, and the slot it names is then never rewritten when
+		;-- its buffer moves down -- a raw pointer left holding a reclaimed address.
+		;-- Reading the count off the write cursor makes the two spans one span.
+		nb: (as-integer (as byte-ptr! refs - as byte-ptr! memory/stk-refs)) / (2 * size? int-ptr!)
+		if nb > 0 [
+			stats/stk-pairs: stats/stk-pairs + nb
 			qsort as byte-ptr! memory/stk-refs nb (2 * size? int-ptr!) :compare-cb
-
-			;tail: refs
-			;refs: memory/stk-refs
-			;until [
-			;	probe [refs ": [" as int-ptr! refs/1 #":" as int-ptr! refs/2 #"]"]
-			;	refs: refs + 2
-			;	refs = tail
-			;]
 		]
 	]
 
@@ -2452,6 +2452,7 @@ collector: context [
 		print-line ["  moved bytes   : " stats/moved-bytes]
 		print-line ["  stack slots   : " stats/stack-slots]
 		print-line ["  stack roots   : " stats/stack-roots]
+		print-line ["  stack refs    : " stats/stk-pairs " pairs sorted, " stats/stk-rewrites " relocated by the sweep"]
 		print-line ["  resolve walk  : " stats/resolve-steps " extent words searched over " stats/resolve-calls " resolutions, " node-registry/used " live entries"]
 		print-line ["  frame runs    : " stats/run-frames " of " frames-list/series/count " frames read, " stats/run-headers " headers published, " frames-list/runs/used " pool words (" stats/run-peak " peak)"]
 		;-- Ratios, not raw sums: the decision is a fraction, and a sum of two hundred

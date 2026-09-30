@@ -61,6 +61,10 @@
 - `node-registry/used` is the O(1) live-entry count `memory-info` reads at verbose 1; `debug-tools/chunk-bound` and `collector/check-registry` are the per-chunk / free-list walks
 - A `-d` build of a Red program reaches only the symbols listed in `system/utils/libRedRT-exports.red`; a test of runtime internals (`registry-slot`, `node-registry`, ...) must be built `-r`, which embeds the runtime
 - A callback written in user code and stored via `externals/register`/`register-node` never runs when the *runtime* dispatches it in a release build of a Red program (both the native and node path) - don't gate on observing it
+- An interior pointer is answered from the run the frame publishes for that cycle (`frames-list/runs`): a run only extends, is resumable, and a candidate is answered once the frontier passes it - so no header is read twice in a cycle. Every block address dies at the next `rebuild`
+- GC run counters are per-cycle and printed in the last dump: a cumulative `integer!` overflows at 2^31 (redbin-codec passed a billion header reads)
+- `Red/System` `if` has no else block - `if c [..][..]` is "unsupported expression"; use `either`
+- `declare context!` does not zero a pointer member - use `alias struct!` + `declare`, whose members start at zero
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps

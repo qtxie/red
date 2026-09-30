@@ -25,10 +25,31 @@ collector: context [
 		FRAME_SERIES
 	]
 
+	;-- What a conservative candidate landed on. Only ROOT_BOUND names a live series:
+	;-- the rest are an address in no buffer, a chain that could not be read far enough,
+	;-- or the layout an allocation left behind after it died or moved. For those the
+	;-- collector cannot tell what to keep, so it pins the frame instead; see
+	;-- frames-list/pin.
+	#enum root-state! [
+		ROOT_BOUND									;-- live header, its registry entry names it back
+		ROOT_LOOSE									;-- the frame holds no buffer at that address
+		ROOT_BROKEN									;-- the frame's chain could not be walked to it
+		ROOT_FREE									;-- the header there is released
+		ROOT_ORPHAN									;-- its header names no registry entry
+		ROOT_BACKREF								;-- that entry names a different buffer
+	]
+
 	stats: declare struct! [
 		cycles		 [integer!]							;-- nb or GC runs
 		pinned-frames [integer!]						;-- conservatively retained series frames in current cycle
 		pinned-bytes  [integer!]						;-- bytes retained by conservative frame pins
+		pin-hits	 [integer!]							;-- candidates that could not be rooted and pinned a frame
+		pin-gaps	 [integer!]							;-- of those, ones from a gap word rather than a declared slot
+		pin-loose	 [integer!]							;-- frames added by a candidate in no buffer
+		pin-broken	 [integer!]							;-- frames added by a candidate the chain could not place
+		pin-free	 [integer!]							;-- frames added by a candidate on a released header
+		pin-orphan	 [integer!]							;-- frames added by a header naming no entry
+		pin-backref  [integer!]							;-- frames added by an entry naming another buffer
 		mark-time	 [float!]							;-- cumulative marking seconds		(RED_GC_STATS)
 		scan-time	 [float!]							;-- cumulative native stack scan seconds
 		sweep-time	 [float!]							;-- cumulative sweep/compaction seconds
@@ -36,6 +57,11 @@ collector: context [
 		moved-bytes  [integer!]							;-- payload bytes relocated
 		stack-slots  [integer!]							;-- conservative stack words examined
 		stack-roots  [integer!]							;-- stack words that rooted a series
+		resolve-calls [integer!]						;-- interior pointers handed to find-series-owner
+		resolve-steps [integer!]						;-- published extent words searched to answer them (cumulative)
+		run-headers  [integer!]							;-- series headers read to publish runs this cycle (last)
+		run-frames	 [integer!]							;-- frames a candidate made the scan read this cycle (last)
+		run-peak	 [integer!]							;-- widest the run pool has ever been
 		queue-peak	 [integer!]							;-- widest marking queue, in cell ranges
 		handle-bits	 [integer!]							;-- declared slots the handle bitmap named
 		probe-roots  [integer!]							;-- handles the range probe rooted that it did not
@@ -160,7 +186,14 @@ collector: context [
 	init: func [][
 		stats/cycles: 			0
 		stats/pinned-frames:	0
-		stats/pinned-bytes:	0
+		stats/pinned-bytes:		0
+		stats/pin-hits:			0
+		stats/pin-gaps:			0
+		stats/pin-loose:		0
+		stats/pin-broken:		0
+		stats/pin-free:			0
+		stats/pin-orphan:		0
+		stats/pin-backref:		0
 		stats/mark-time:		0.0
 		stats/scan-time:		0.0
 		stats/sweep-time:		0.0
@@ -168,6 +201,9 @@ collector: context [
 		stats/moved-bytes:		0
 		stats/stack-slots:		0
 		stats/stack-roots:		0
+		stats/resolve-calls:	0
+		stats/resolve-steps:	0
+		stats/run-peak:			0
 		stats/handle-bits:		0
 		stats/probe-roots:		0
 		stats/probe-new:		0
@@ -228,6 +264,31 @@ collector: context [
 		nodes/size:  min-size
 		series/size: min-size
 		pinned/size: fit-cache
+
+		;-- The allocator lays each frame's buffers forward, so a walk over a frame's chain
+		;-- yields its allocation addresses in ascending order. Publishing those addresses
+		;-- lets the stack scan binary-search a frame instead of walking it again: a run is
+		;-- only ever extended at its end, so what is published stays sorted.
+		;-- The frame at array index i owns the block starting at `bounds/i` in the pool --
+		;-- -1 while no candidate has landed in it this cycle, since a frame nobody asks
+		;-- about has nothing to publish. `length/i` counts the allocation addresses it
+		;-- names, and one word past them is the frontier: the next address the walk has not
+		;-- published, which is the end of the frame once it is published in full and the bad
+		;-- link where the chain stopped growing forward. A negative length marks that break,
+		;-- a negative `room/i` (the block's capacity) that completion. Candidates are
+		;-- answered once the frontier passes them, so no header is read twice in a cycle and
+		;-- no frame is read further than a candidate needed.
+		runs!: alias struct! [
+			pool	 [ptr-ptr!]							;-- the published words, one block after another
+			size	 [integer!]							;-- pool capacity, in words
+			used	 [integer!]							;-- words the current cycle has reserved
+			bounds	 [int-ptr!]							;-- per frame: first word of its block, -1 when untouched
+			length	 [int-ptr!]							;-- per frame: addresses published, negated when the chain broke
+			room	 [int-ptr!]							;-- per frame: words its block holds, negated when fully published
+			edge	 [ptr-ptr!]							;-- per frame: the address its allocations cannot reach past
+			capacity [integer!]							;-- room in the four per-frame arrays
+		]
+		runs: declare runs!
 		
 		rebuild: func [									;-- build an array of registry chunk and frame pointers
 			/local
@@ -246,6 +307,13 @@ collector: context [
 			pinned/count: 0
 			stats/pinned-frames: 0
 			stats/pinned-bytes: 0
+			stats/pin-hits: 0
+			stats/pin-gaps: 0
+			stats/pin-loose: 0
+			stats/pin-broken: 0
+			stats/pin-free: 0
+			stats/pin-orphan: 0
+			stats/pin-backref: 0
 			
 			process: [
 				until [
@@ -299,6 +367,7 @@ collector: context [
 				pos: s/list + cnt
 				process
 			]
+			reset-runs									;-- the frames are sorted now, so the runs line up with them
 		]
 
 		big-frame?: func [
@@ -314,12 +383,187 @@ collector: context [
 			no
 		]
 
-		;-- Return the containing series or big-series frame without interpreting
-		;-- the candidate as a series header. The sorted predecessor lookup keeps
-		;-- conservative stack values from causing arbitrary memory reads.
-		find-series-frame: func [
+		;-- Room in the pool for `wanted` words. It is only the cycle's scratch, so it grows
+		;-- geometrically and is never handed back.
+		reserve-pool: func [
+			wanted [integer!]
+			/local p [byte-ptr!]
+		][
+			if wanted > runs/size [
+				until [
+					runs/size: either zero? runs/size [1024][runs/size * 2]
+					runs/size >= wanted
+				]
+				p: as byte-ptr! runs/pool
+				runs/pool: either null? p
+					[as ptr-ptr! allocate runs/size * size? int-ptr!]
+					[as ptr-ptr! realloc p runs/size * size? int-ptr!]
+			]
+			if wanted > stats/run-peak [stats/run-peak: wanted]
+		]
+
+		;-- Give frame i's block room for `wanted` words, keeping the addresses it publishes.
+		;-- A block can only be extended where it lies when nothing was published after it, so
+		;-- one a later frame has overtaken moves to the tail of the pool.
+		grow-block: func [
+			i		 [integer!]
+			wanted	 [integer!]
+			/local
+				b l r	 [int-ptr!]
+				p q tail [ptr-ptr!]
+				start old new keep [integer!]
+		][
+			r: runs/room + i
+			old: r/value
+			if old < 0 [old: 0 - old]
+			if wanted > old [
+				new: either zero? old [16][old * 2]
+				while [new < wanted][new: new * 2]
+				b: runs/bounds + i
+				start: b/value
+				either start < 0 [
+					reserve-pool runs/used + new
+					b/value: runs/used
+					runs/used: runs/used + new
+					r/value: new							;-- a block nobody has written holds nothing yet
+				][
+					l: runs/length + i
+					keep: either l/value < 0 [0 - l/value][l/value]
+					keep: keep + 1							;-- its addresses and the frontier after them
+					either start + old < runs/used [
+						reserve-pool runs/used + new
+						p: runs/pool + start
+						q: runs/pool + runs/used
+						tail: q + keep
+						while [q < tail][
+							q/value: p/value
+							p: p + 1
+							q: q + 1
+						]
+						b/value: runs/used
+						runs/used: runs/used + new
+					][
+						reserve-pool start + new				;-- ours is the newest block: it keeps its place
+						runs/used: start + new
+					]
+					r/value: either r/value < 0 [0 - new][new]	;-- a finished block stays finished
+				]
+			]
+		]
+
+		;-- Nothing published in the last cycle can be read now: the frames were sorted into a
+		;-- new array and compaction moved buffers, so every block starts over. Which frames a
+		;-- cycle reads is the scan's business, not the rebuild's.
+		reset-runs: func [
+			/local
+				i cnt [integer!]
+				b r [int-ptr!]
+		][
+			cnt: series/count
+			if runs/capacity < cnt [
+				runs/capacity: cnt
+				runs/bounds: either null? runs/bounds
+					[as int-ptr! allocate runs/capacity * size? integer!]
+					[as int-ptr! realloc as byte-ptr! runs/bounds runs/capacity * size? integer!]
+				runs/length: either null? runs/length
+					[as int-ptr! allocate runs/capacity * size? integer!]
+					[as int-ptr! realloc as byte-ptr! runs/length runs/capacity * size? integer!]
+				runs/room: either null? runs/room
+					[as int-ptr! allocate runs/capacity * size? integer!]
+					[as int-ptr! realloc as byte-ptr! runs/room runs/capacity * size? integer!]
+				runs/edge: either null? runs/edge
+					[as ptr-ptr! allocate runs/capacity * size? int-ptr!]
+					[as ptr-ptr! realloc as byte-ptr! runs/edge runs/capacity * size? int-ptr!]
+			]
+			runs/used: 0
+			stats/run-headers: 0
+			stats/run-frames: 0
+			i: 0
+			while [i < cnt][
+				b: runs/bounds + i
+				b/value: -1
+				r: runs/room + i
+				r/value: 0							;-- an empty block is what a frame index starts each cycle
+				i: i + 1
+			]
+		]
+
+		;-- Publish frame i's allocations up to the one that could hold `ptr`, and no further.
+		;-- This is the walk the stack scan used to restart for every candidate, made
+		;-- resumable: it stops as soon as the frontier passes the candidate, so candidates
+		;-- sharing a frame share the walk and no header is read twice in a cycle.
+		advance-run: func [
+			i		 [integer!]
+			ptr		 [int-ptr!]
+			/local
+				p			 [ptr-ptr!]
+				f			 [ptr-ptr!]
+				b l r		 [int-ptr!]
+				e		 [ptr-ptr!]
+				base		 [int-ptr!]
+				frame		 [series-frame!]
+				big			 [big-frame!]
+				s				 [series!]
+				finish next [byte-ptr!]
+				n			 [integer!]
+				go?			 [logic!]
+		][
+			b: runs/bounds + i
+			l: runs/length + i
+			r: runs/room + i
+			e: runs/edge + i
+			if b/value >= 0 [
+				n: either l/value < 0 [0 - l/value][l/value]
+				f: runs/pool + b/value + n
+				go?: all [l/value >= 0 r/value >= 0 ptr >= f/value]	;-- only a run that stops short can grow
+				finish: as byte-ptr! e/value							;-- the frame was read once; its end is kept
+			]
+			if b/value < 0 [										;-- first candidate to land in this frame this cycle
+				p: series/list + i
+				base: p/value
+				either big-frame? base [
+					big: as big-frame! base
+					s: as series! ((as byte-ptr! base) + size? big-frame!)
+					finish: (as byte-ptr! s) + big/size
+				][
+					frame: as series-frame! base
+					s: as series! ((as byte-ptr! base) + size? series-frame!)
+					finish: as byte-ptr! frame/heap
+				]
+				grow-block i 1
+				stats/run-frames: stats/run-frames + 1
+				n: 0
+				l/value: 0
+				e/value: as int-ptr! finish
+				f: runs/pool + b/value								;-- grow-block chose where the block lies
+				f/value: as int-ptr! s								;-- the walk starts at the frame's first allocation
+				if (as byte-ptr! s) >= finish [r/value: 0 - r/value]	;-- a frame with nothing allocated is read in full
+				go?: all [(as byte-ptr! s) < finish (as byte-ptr! s) <= ptr]
+			]
+			while [all [go? (as byte-ptr! f/value) < finish (as byte-ptr! f/value) <= ptr]][
+				s: as series! f/value
+				next: (as byte-ptr! s) + (size? series-buffer!) + s/size + SERIES_BUFFER_PADDING
+				stats/run-headers: stats/run-headers + 1
+				grow-block i n + 2							;-- the address examined stays published, the bound follows
+				n: n + 1
+				f: runs/pool + b/value + n					;-- the block may have moved, and the pool grown
+				f/value: as int-ptr! next
+				either any [next <= (as byte-ptr! s) next > finish][
+					l/value: 0 - n							;-- the chain stopped growing forward: answer no further
+					go?: no
+				][
+					l/value: n								;-- n addresses precede the frontier this walk just wrote
+					if next >= finish [r/value: 0 - r/value]	;-- published to the end of the frame: nothing left to read
+				]
+			]
+		]
+
+		;-- Index of the frame whose allocation area contains ptr, or -1. The frames are
+		;-- sorted, so this is the predecessor search the containment test always made;
+		;-- it only hands back the position, which is where that frame's run lives.
+		find-index: func [
 			ptr [int-ptr!]
-			return: [int-ptr!]
+			return: [integer!]
 			/local
 				b e p [ptr-ptr!]
 				base [int-ptr!]
@@ -327,14 +571,14 @@ collector: context [
 				big [big-frame!]
 				finish [byte-ptr!]
 		][
-			if zero? series/count [return null]
+			if zero? series/count [return -1]
 			b: series/list
 			e: b + series/count
 			while [b < e][
 				p: b + (((as-integer e - b) / size? int-ptr!) / 2)
 				either p/value <= ptr [b: p + 1][e: p]
 			]
-			if b = series/list [return null]
+			if b = series/list [return -1]
 			p: b - 1
 			base: p/value
 			either big-frame? base [
@@ -344,11 +588,67 @@ collector: context [
 				regular: as series-frame! base
 				finish: (as byte-ptr! regular) + regular/size
 			]
-			either all [base <= ptr ptr < as int-ptr! finish][base][null]
+			either all [base <= ptr ptr < as int-ptr! finish]
+				[(as-integer p - series/list) / size? int-ptr!]
+				[-1]
+		]
+
+		;-- The allocation a frame contains `ptr` in, if any. Its run is ascending by
+		;-- construction and reaches past the candidate, so the last address at or below the
+		;-- pointer is the only header the walk could have matched, and the word stored after
+		;-- it is the bound that walk compared against -- the end of the frame, or the bad
+		;-- link where it gave up. `miss` says why nothing matched.
+		resolve: func [
+			i	 [integer!]								;-- frame index, from find-index
+			ptr	 [int-ptr!]
+			miss [int-ptr!]								;-- out: ROOT_BOUND, ROOT_LOOSE or ROOT_BROKEN
+			return: [series!]
+			/local
+				first n lo hi mid [integer!]
+				p q [ptr-ptr!]
+				b l [int-ptr!]
+		][
+			advance-run i ptr
+			b: runs/bounds + i
+			first: b/value
+			l: runs/length + i
+			n: l/value
+			miss/value: either n < 0 [ROOT_BROKEN][ROOT_LOOSE]
+			lo: first
+			hi: either n < 0 [first - n][first + n]			;-- the addresses, never the frontier after them
+			while [lo < hi][
+				stats/resolve-steps: stats/resolve-steps + 1
+				mid: lo + ((hi - lo) / 2)
+				p: runs/pool + mid
+				either p/value <= ptr [lo: mid + 1][hi: mid]
+			]
+			if lo = first [return null]						;-- below the frame's first allocation
+			p: runs/pool + lo - 1
+			q: runs/pool + lo
+			if ptr < q/value [
+				miss/value: ROOT_BOUND
+				return as series! p/value
+			]
+			null
+		]
+
+		;-- Return the containing series or big-series frame without interpreting
+		;-- the candidate as a series header. The sorted predecessor lookup keeps
+		;-- conservative stack values from causing arbitrary memory reads.
+		find-series-frame: func [
+			ptr [int-ptr!]
+			return: [int-ptr!]
+			/local i [integer!] p [ptr-ptr!]
+		][
+			i: find-index ptr
+			if i < 0 [return null]
+			p: series/list + i
+			p/value
 		]
 
 		pin: func [
-			ptr [int-ptr!]
+			ptr    [int-ptr!]
+			reason [integer!]								;-- root-state the candidate met, for attribution
 			return: [logic!]
 			/local base [int-ptr!] p tail [ptr-ptr!] frame [series-frame!] big [big-frame!]
 		][
@@ -368,6 +668,13 @@ collector: context [
 			p/value: base
 			pinned/count: pinned/count + 1
 			stats/pinned-frames: stats/pinned-frames + 1
+			case [										;-- the frame belongs to whoever pinned it first
+				reason = ROOT_LOOSE  [stats/pin-loose: stats/pin-loose + 1]
+				reason = ROOT_BROKEN [stats/pin-broken: stats/pin-broken + 1]
+				reason = ROOT_FREE   [stats/pin-free: stats/pin-free + 1]
+				reason = ROOT_ORPHAN [stats/pin-orphan: stats/pin-orphan + 1]
+				true [stats/pin-backref: stats/pin-backref + 1]
+			]
 			either big-frame? base [
 				big: as big-frame! base
 				stats/pinned-bytes: stats/pinned-bytes + big/size + size? big-frame!
@@ -950,39 +1257,54 @@ collector: context [
 	]
 
 	;-- Resolve an arbitrary pointer inside a managed series allocation to its
-	;-- allocator-owned header. Only trusted headers are dereferenced while
-	;-- walking from the frame base.
+	;-- allocator-owned header, by searching the allocations the cycle's run publishes
+	;-- for the frame that contains it. Only trusted frame pointers and published
+	;-- addresses are read, and no header is dereferenced to answer. `miss` reports why
+	;-- the address names no buffer: the frame has no extent covering it, or its chain
+	;-- could not be read far enough to answer.
 	find-series-owner: func [
-		ptr [int-ptr!]
+		ptr	 [int-ptr!]
+		miss [int-ptr!]									;-- out: ROOT_BOUND, ROOT_LOOSE or ROOT_BROKEN
 		return: [series!]
-		/local
-			base [int-ptr!]
-			frame [series-frame!]
-			big [big-frame!]
-			s [series!]
-			finish next [byte-ptr!]
+		/local i [integer!]
 	][
-		base: frames-list/find-series-frame ptr
-		if null? base [return null]
-		either frames-list/big-frame? base [
-			big: as big-frame! base
-			s: as series! ((as byte-ptr! big) + size? big-frame!)
-			finish: (as byte-ptr! s) + big/size
-		][
-			frame: as series-frame! base
-			s: as series! ((as byte-ptr! frame) + size? series-frame!)
-			finish: as byte-ptr! frame/heap
+		stats/resolve-calls: stats/resolve-calls + 1
+		miss/value: ROOT_LOOSE
+		i: frames-list/find-index ptr
+		if i < 0 [return null]
+		frames-list/resolve i ptr miss
+	]
+
+	;-- Classify a header a candidate landed on. A word is only evidence about a
+	;-- series when the header there is live and the registry entry it names points
+	;-- back at it; anything else is the layout an allocation left behind after it
+	;-- died or moved.
+	root-state: func [
+		s		 [series!]
+		return: [integer!]
+		/local node [node!]
+	][
+		if s/flags and series-in-use = 0 [return ROOT_FREE]
+		if any [s/node < 1 s/node >= node-registry/next][return ROOT_ORPHAN]
+		node: resolve-node s/node
+		if any [null? node node/value <> as int-ptr! s][return ROOT_BACKREF]
+		ROOT_BOUND
+	]
+
+	;-- Root a header that root-state accepted: keep its entry, and walk its cells only
+	;-- when the root names the header itself.
+	retain-series-root: func [
+		s		[series!]
+		own?	[logic!]									;-- root names the header, not its payload
+		/local unit [integer!]
+	][
+		keep :s/node
+		unit: GET_UNIT(s)
+		if all [own? unit = 1][mark-hashtable-node (resolve-node s/node)]
+		if all [own? unit = 16 s/flags and flag-gc-scan = 0][
+			s/flags: s/flags or flag-gc-scan
+			mark-values s/offset s/tail
 		]
-		while [(as byte-ptr! s) < finish][
-			next: (as byte-ptr! s) + (size? series-buffer!) + s/size + SERIES_BUFFER_PADDING
-			if all [
-				(as int-ptr! s) <= ptr
-				ptr < as int-ptr! next
-			][return s]
-			if any [next <= as byte-ptr! s next > finish][return null]
-			s: as series! next
-		]
-		null
 	]
 
 	;-- Retain the series a root points at. `own?` says the root names the series
@@ -995,23 +1317,9 @@ collector: context [
 		s     [series!]
 		own?  [logic!]									;-- root names the header, not its payload
 		return: [logic!]
-		/local node [node!] unit [integer!]
 	][
-		if any [
-			null? s
-			s/flags and series-in-use = 0
-			s/node < 1
-			s/node >= node-registry/next
-		][return no]
-		node: resolve-node s/node
-		if any [null? node node/value <> as int-ptr! s][return no]
-		keep :s/node
-		unit: GET_UNIT(s)
-		if all [own? unit = 1][mark-hashtable-node node]
-		if all [own? unit = 16 s/flags and flag-gc-scan = 0][
-			s/flags: s/flags or flag-gc-scan
-			mark-values s/offset s/tail
-		]
+		if ROOT_BOUND <> root-state s [return no]
+		retain-series-root s own?
 		yes
 	]
 
@@ -1054,7 +1362,7 @@ collector: context [
 		root?   [logic!]									;-- slot content is a reference
 		refs    [ptr-ptr!]
 		return: [ptr-ptr!]
-		/local p [int-ptr!] node [node!] s [series!] managed? [logic!] own? [logic!]
+		/local p [int-ptr!] node [node!] s [series!] state [integer!]
 	][
 		p: sp/value
 		if #either any [target = 'X86-64 target = 'ARM64] [
@@ -1070,7 +1378,7 @@ collector: context [
 				node/value <> null
 				(frames-list/find-series-frame node/value) <> null
 			][
-				s: find-series-owner node/value
+				s: find-series-owner node/value :state
 				if all [s <> null node/value = as int-ptr! s][
 					keep-raw sp
 					mark-series-root s yes
@@ -1083,14 +1391,22 @@ collector: context [
 			not all [(as byte-ptr! stack/bottom) <= p p <= (as byte-ptr! stack/top)]
 			(frames-list/find-series-frame p) <> null
 		][
-			s: find-series-owner p
-			own?: (as int-ptr! s) = p
-			managed?: all [s <> null any [not root? mark-series-root s own?]]
-			either managed? [
+			s: find-series-owner p :state					;-- ROOT_LOOSE / ROOT_BROKEN when it names no buffer
+			if all [root? ROOT_BOUND = state][
+				state: root-state s							;-- a declared slot must also name a live entry
+			]
+			either any [
+				all [not root? ROOT_LOOSE = state]			;-- a gap word in the frame's tail roots and rewrites nothing
+				ROOT_BROKEN = state							;-- the frame's layout cannot be read at all
+				all [root? ROOT_BOUND <> state]				;-- a declared slot holding stale header layout
+			][
+				stats/pin-hits: stats/pin-hits + 1
+				unless root? [stats/pin-gaps: stats/pin-gaps + 1]
+				frames-list/pin p state
+			][
+				if root? [retain-series-root s (as int-ptr! s) = p]
 				if store? [refs: store-stack-ref p sp refs]
 				stats/stack-roots: stats/stack-roots + 1
-			][
-				frames-list/pin p
 			]
 		]
 		refs
@@ -1939,12 +2255,17 @@ collector: context [
 		print-line ["  moved bytes   : " stats/moved-bytes]
 		print-line ["  stack slots   : " stats/stack-slots]
 		print-line ["  stack roots   : " stats/stack-roots]
+		print-line ["  resolve walk  : " stats/resolve-steps " extent words searched over " stats/resolve-calls " resolutions, " node-registry/used " live entries"]
+		print-line ["  frame runs    : " stats/run-frames " of " frames-list/series/count " frames read, " stats/run-headers " headers published, " frames-list/runs/used " pool words (" stats/run-peak " peak)"]
 		print-line ["  handle slots  : " stats/handle-bits " bitmap-named, " stats/probe-roots " probed (" stats/probe-new " nothing else rooted)"]
 		print-line ["  probe aliases : " stats/probe-alias " words too wide to be an index"]
 		print-line ["  gap slots     : " stats/gap-words " examined over " stats/gap-frames " frames (deepest " stats/gap-scan "), " stats/gap-stores " recorded / " stats/gap-pins " pinned (deepest hit " stats/gap-depth ")"]
 		print-line ["  gap bound     : " stats/gap-bound " frames stopped at their own bottom, " stats/gap-refused " refused, " stats/gap-unpub " with no published depth"]
 		print-line ["  mark queue    : " stats/queue-peak " ranges peak / " mark-queue/size " allocated"]
 		print-line ["  pinned (last) : " stats/pinned-frames " frames / " stats/pinned-bytes " bytes"]
+		print-line ["  pin causes    : " stats/pin-hits " candidates (" stats/pin-gaps " from gap words) added " stats/pinned-frames " frames"]
+		print-line ["  pin evidence  : " stats/pin-loose " in no buffer, " stats/pin-broken " unreadable layout, "
+			stats/pin-free " released header, " stats/pin-orphan " no entry, " stats/pin-backref " other buffer"]
 		free as byte-ptr! buf
 	]
 

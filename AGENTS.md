@@ -65,6 +65,11 @@
 - GC run counters are per-cycle and printed in the last dump: a cumulative `integer!` overflows at 2^31 (redbin-codec passed a billion header reads)
 - `Red/System` `if` has no else block - `if c [..][..]` is "unsupported expression"; use `either`
 - `declare context!` does not zero a pointer member - use `alias struct!` + `declare`, whose members start at zero
+- Series flags bits 5-7 are free: `flag-unit-mask` (FFFFFFE0h) preserves them, `get-unit-mask` (1Fh) never reads them, and `alloc-series-buffer` assigns the whole word - so a buffer starts at age 0 with nothing in the allocator knowing the field
+- The age pass counts age in *cycles*, so the period is what makes a 3-cycle window mean 600 allocations or 300000 - and `RED_GC_STRESS` at 20000+ does not move these units off their own trigger, so a period sweep is a repeat sweep. There is no cadence where the window both skips old live data and absorbs the churn: the nursery is measured out (proposal P4 result)
+- Fixed buffers never appear in that walk: `alloc-fixed-series` builds its buffer with raw `allocate`, not from a series frame, so `gen/immune` is always 0
+- `gen/*` sums are `float!` on purpose - a cumulative `integer!` wraps (recycle-test passed a billion live buffer-bytes in 400 cycles) and the ratios printed from it become lies
+- Cumulative GC counters are NOT comparable across builds: three builds of one source put recycle-test's gap-pin total at 2, 0 and 1, because the unit's own code addresses feed the conservative scan. Only per-cycle decisions (`pin causes`/`pin evidence`) and assertion counts survive a rebuild; within one binary the counters are stable across runs
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps

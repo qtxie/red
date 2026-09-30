@@ -107,6 +107,43 @@ collector: context [
 
 	#define GC_STATS_PERIOD 100
 
+	;-- Buffer age, carried in bits 5-7 of the series flags word. They are the only
+	;-- bits a flag rewrite leaves alone: `flag-unit-mask` (FFFFFFE0h) preserves them
+	;-- when a datatype restamps the unit, and `get-unit-mask` (1Fh) never reads them.
+	;-- alloc-series-buffer writes the whole word, so a buffer taken from a frame --
+	;-- fresh or over a released one -- starts at age 0 by itself; nothing in the
+	;-- allocator knows about this field.
+	#define flag-age-shift	5
+	#define flag-age-mask		000000E0h
+	#define flag-age-max		7
+	#define nursery-age		3							;-- a minor cycle would run every this many cycles
+	#define flag-immovable	00300000h				;-- nogc | fixed: never a nursery candidate
+
+	;-- What a nursery would skip, summed over every cycle. The sums are float! because a
+	;-- 32-bit total wraps: recycle-test passed a billion live buffer-bytes in four hundred
+	;-- cycles, and a wrapped denominator would make every ratio on this line a lie. A
+	;-- float! keeps integers exactly to 2^53, far past any run. Big frames are not walked:
+	;-- an allocation too big for a series frame forces a full cycle before it happens, so
+	;-- its age is decided by the allocator, not by these counters.
+	gen: declare struct! [
+		cycles		[integer!]						;-- passes run
+		productive	[integer!]						;-- of those, ones that released anything
+		adequate	[integer!]						;-- of those, ones that released nothing older than the nursery
+		immune		[integer!]						;-- fixed/nogc buffers in the heap (last pass only)
+		live		[float!]						;-- buffers marked reachable, counted once per pass
+		live-bytes	[float!]						;-- their extents
+		young		[float!]						;-- of those, born within the nursery window
+		young-bytes	[float!]						;-- their extents
+		dead		[float!]						;-- buffers a pass released
+		dead-bytes	[float!]						;-- their extents
+		dead-young	[float!]						;-- of those, a minor cycle would have reached
+		dead-young-bytes [float!]					;-- their extents
+		die-0		[float!]						;-- released buffers by age: born since the last pass
+		die-1		[float!]						;-- survived one pass
+		die-2		[float!]						;-- survived two
+		die-3		[float!]						;-- survived to or past the nursery cut
+	]
+
 	read-stress-env: func [
 		period [int-ptr!]
 		return: [logic!]
@@ -217,6 +254,9 @@ collector: context [
 		stats/gap-bound:		0
 		stats/gap-unpub:		0
 		stats/gap-refused:		0
+		gen/cycles:				0
+		gen/productive:			0
+		gen/adequate:			0
 		stress?: read-stress-env :stress-period
 		stats?:  read-stats-env
 		check-abi
@@ -1444,6 +1484,93 @@ collector: context [
 		]
 	]
 
+	;-- P4 measurement: how much of a full cycle's work is about young data? It is
+	;-- read-only for the collector's decisions -- it ages the stamp alloc-series-buffer
+	;-- left at zero, and counts -- so it can run at the mark/sweep seam without changing
+	;-- what is kept. It must run after mark-pinned-frames: a pinned frame is all-live by
+	;-- construction there, so an unmarked in-use buffer below is one the sweep releases.
+	;-- Big frames are skipped; see the gen comment.
+	;--
+	;-- Every pass adds to the totals, because a single cycle says nothing: under a forced
+	;-- pace most cycles reclaim no garbage at all, and the ones that do are the evidence.
+	;-- An immovable buffer is never nursery fodder, so it is skipped: today none is laid out
+	;-- in a series frame at all (alloc-fixed-series builds its buffer with raw allocate), so
+	;-- gen/immune counts zero.
+	age-series-frames: func [
+		/local
+			frame [series-frame!]
+			s heap nxt [series!]
+			flags age size [integer!]
+			immune live live-b young young-b [integer!]
+			dead dead-b dead-y dead-yb d0 d1 d2 d3 [integer!]
+	][
+		immune: 0	live: 0		live-b: 0	young: 0	young-b: 0
+		dead: 0		dead-b: 0	dead-y: 0	dead-yb: 0
+		d0: 0		d1: 0		d2: 0		d3: 0
+
+		frame: memory/s-head
+		until [
+			s: as series! frame + 1
+			heap: frame/heap
+			while [s < heap][
+				nxt: as series! (as byte-ptr! s + 1) + s/size + SERIES_BUFFER_PADDING
+				flags: s/flags
+				if all [
+					flags and series-in-use <> 0
+					flags and flag-immovable = 0
+				][
+					age: (flags and flag-age-mask) >> flag-age-shift
+					size: s/size
+					either flags and flag-gc-mark <> 0 [
+						live: live + 1
+						live-b: live-b + size
+						if age < nursery-age [
+							young: young + 1
+							young-b: young-b + size
+						]
+						if age < flag-age-max [		;-- the survivor is one cycle older for the next pass
+							s/flags: (flags and not flag-age-mask) or ((age + 1) << flag-age-shift)
+						]
+					][
+						dead: dead + 1
+						dead-b: dead-b + size
+						if age < nursery-age [
+							dead-y: dead-y + 1
+							dead-yb: dead-yb + size
+						]
+						case [
+							age = 0 [d0: d0 + 1]
+							age = 1 [d1: d1 + 1]
+							age = 2 [d2: d2 + 1]
+							true 	[d3: d3 + 1]
+						]
+					]
+				]
+				s: nxt
+			]
+			frame: frame/next
+			frame = null
+		]
+		gen/immune: immune							;-- the heap's fixed part: the last pass
+		gen/live: gen/live + (as float! live)
+		gen/live-bytes: gen/live-bytes + (as float! live-b)
+		gen/young: gen/young + (as float! young)
+		gen/young-bytes: gen/young-bytes + (as float! young-b)
+		gen/dead: gen/dead + (as float! dead)
+		gen/dead-bytes: gen/dead-bytes + (as float! dead-b)
+		gen/dead-young: gen/dead-young + (as float! dead-y)
+		gen/dead-young-bytes: gen/dead-young-bytes + (as float! dead-yb)
+		gen/die-0: gen/die-0 + (as float! d0)
+		gen/die-1: gen/die-1 + (as float! d1)
+		gen/die-2: gen/die-2 + (as float! d2)
+		gen/die-3: gen/die-3 + (as float! d3)
+		gen/cycles: gen/cycles + 1
+		if dead > 0 [
+			gen/productive: gen/productive + 1
+			if dead-y = dead [gen/adequate: gen/adequate + 1]	;-- a minor cycle would have caught it all
+		]
+	]
+
 	clear-pinned-series-frame: func [
 		frame [series-frame!]
 		/local s [series!] finish next [byte-ptr!]
@@ -2244,7 +2371,7 @@ collector: context [
 	dump-stats: func [									;-- cumulative totals since init (RED_GC_STATS)
 		/local buf [c-string!]
 	][
-		buf: as c-string! allocate 128
+		buf: as c-string! allocate 512			;-- the nursery lines are the widest here
 		print-line ["^/== GC stats == (RED_GC_STATS)"]
 		print-line ["  cycles        : " stats/cycles]
 		sprintf [buf "  mark time     : %.1f ms" stats/mark-time * 1000.0]  print-line buf
@@ -2257,6 +2384,18 @@ collector: context [
 		print-line ["  stack roots   : " stats/stack-roots]
 		print-line ["  resolve walk  : " stats/resolve-steps " extent words searched over " stats/resolve-calls " resolutions, " node-registry/used " live entries"]
 		print-line ["  frame runs    : " stats/run-frames " of " frames-list/series/count " frames read, " stats/run-headers " headers published, " frames-list/runs/used " pool words (" stats/run-peak " peak)"]
+		;-- Ratios, not raw sums: the decision is a fraction, and a sum of two hundred
+		;-- cycles is not readable as one. Sums are printed beside them so the fraction
+		;-- can be checked against the cycle count on the third line.
+		sprintf [buf "  nursery live  : %.1f of %.1f buffer-passes, %.1f of %.1f bytes young of all live within %d passes of birth (%d immune)"
+			gen/young gen/live gen/young-bytes gen/live-bytes nursery-age gen/immune] print-line buf
+		sprintf [buf "  nursery minor : %.1f of %.1f buffers, %.1f of %.1f bytes the minor cycle reaches of all released -- by age %.1f/%.1f/%.1f/%.1f at 0/1/2/%d+"
+			gen/dead-young gen/dead gen/dead-young-bytes gen/dead-bytes
+			gen/die-0 gen/die-1 gen/die-2 gen/die-3 nursery-age] print-line buf
+		sprintf [buf "  nursery share : young is %.1f of live buffers, %.1f of live bytes per hundred; minor catches %.1f of dying buffers, %.1f of their bytes; %.1f of %d productive cycles (%d aged) sufficed"
+			(100.0 * gen/young / gen/live) (100.0 * gen/young-bytes / gen/live-bytes)
+			(100.0 * gen/dead-young / gen/dead) (100.0 * gen/dead-young-bytes / gen/dead-bytes)
+			(100.0 * (as float! gen/adequate) / (as float! gen/productive)) gen/productive gen/cycles] print-line buf
 		print-line ["  handle slots  : " stats/handle-bits " bitmap-named, " stats/probe-roots " probed (" stats/probe-new " nothing else rooted)"]
 		print-line ["  probe aliases : " stats/probe-alias " words too wide to be an index"]
 		print-line ["  gap slots     : " stats/gap-words " examined over " stats/gap-frames " frames (deepest " stats/gap-scan "), " stats/gap-stores " recorded / " stats/gap-pins " pinned (deepest hit " stats/gap-depth ")"]
@@ -2359,6 +2498,7 @@ collector: context [
 		scan-stack-refs yes
 		mark-pinned-frames
 		if timed? [t2: platform/perf-time  d-scan: t2 - t1]
+		if stats? [age-series-frames]				;-- after the stamp, before the sweep: it reads the marks
 
 		#if debug? = yes [if verbose > 1 [probe "sweeping..."]]
 		externals/sweep

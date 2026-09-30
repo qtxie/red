@@ -155,7 +155,9 @@ RedGrabberCB: alias struct! [
 	vtbl					[int-ptr!]
 	width					[integer!]
 	height					[integer!]
-	hWnd					[handle!]
+	stg						[byte-ptr!]							;-- owned by the main thread, see grabber-cb-buffer
+	cap						[integer!]
+	state					[integer!]							;-- 0: idle  1: requested  2: staged  3: too small
 ]
 
 ISampleGrabber: alias struct! [
@@ -238,35 +240,52 @@ grabber-cb-buffer: func [
 	return:			[integer!]
 	/local
 		obj			[RedGrabberCB]
-		bmp			[integer!]
-		values		[red-value!]
-		img			[red-image!]
 ][
-	if collector/running? [return 0]
-
 	obj: as RedGrabberCB this
-	values: get-face-values obj/hWnd
-	img: as red-image! values + FACE_OBJ_IMAGE
-	if TYPE_OF(img) = TYPE_NONE [
-		bmp: 0
-		OS-image/create-bitmap-from-scan0 obj/width obj/height 0 OS-image/fixed-format pBuffer :bmp
-		#either draw-engine = 'GDI+ [
-			image/init-image img OS-image/flip as int-ptr! bmp
+	if 1 = system/atomic/load :obj/state [						;-- foreign thread: fill the staging buffer, nothing else
+		either lBufferSize > obj/cap [
+			system/atomic/store :obj/state 3
 		][
-			image/init-image img OS-image/flip resolve-node bmp
+			copy-memory obj/stg pBuffer lBufferSize
+			system/atomic/store :obj/state 2
 		]
 	]
 	0
 ]
 
-camera-wait-image: func [img [red-image!] /local timeout [float32!]][
+camera-wait-image: func [
+	img				[red-image!]
+	handle			[handle!]
+	/local
+		cam			[camera!]
+		obj			[RedGrabberCB]
+		bmp			[integer!]
+		state		[integer!]
+		timeout		[float32!]
+][
+	cam: as camera! win-long-ptr-to-pointer GetWindowLongPtr handle SLOT_AUX
+	if any [cam = null cam/grabber-cb = null][exit]
+	obj: as RedGrabberCB cam/grabber-cb
+	system/atomic/store :obj/state 1
 	timeout: as float32! 0.0
-	img/header: TYPE_NONE
 	until [
 		platform/wait 0.01
 		timeout: timeout + as float32! 0.01
-		any [TYPE_OF(img) = TYPE_IMAGE timeout > as float32! 3.0]
+		state: system/atomic/load :obj/state
+		any [state <> 1 timeout > as float32! 3.0]
 	]
+	either state = 2 [
+		bmp: 0
+		OS-image/create-bitmap-from-scan0 obj/width obj/height 0 OS-image/fixed-format obj/stg :bmp
+		#either draw-engine = 'GDI+ [
+			image/init-image img OS-image/flip as int-ptr! bmp
+		][
+			image/init-image img OS-image/flip resolve-node bmp
+		]
+	][
+		img/header: TYPE_NONE
+	]
+	system/atomic/store :obj/state 0
 ]
 
 set-camera-viewport: func [
@@ -323,12 +342,19 @@ init-camera: func [
 	]
 ]
 
-free-graph: func [cam [camera!] /local interface [IUnknown]][
+free-graph: func [
+	cam		[camera!]
+	/local
+		interface	[IUnknown]
+	cb		[RedGrabberCB]
+][
 	COM_SAFE_RELEASE(interface cam/builder)
 	COM_SAFE_RELEASE(interface cam/graph)
 	COM_SAFE_RELEASE(interface cam/v-filter)
 	COM_SAFE_RELEASE(interface cam/grabber)
 	COM_SAFE_RELEASE(interface cam/g-filter)
+	cb: as RedGrabberCB cam/grabber-cb
+	unless cb = null [free cb/stg]
 	free as byte-ptr! cam/grabber-cb
 ]
 
@@ -452,6 +478,7 @@ build-preview-graph: func [
 		grabber-cb	[RedGrabberCB]
 		info	[int-ptr!]
 		bmp		[BITMAPINFOHEADER]
+		h		[integer!]
 ][
 	builder: as ICaptureGraphBuilder2 cam/builder/vtbl
 	graph:   as IGraphBuilder cam/graph/vtbl
@@ -480,8 +507,12 @@ build-preview-graph: func [
 	grabber-cb: as RedGrabberCB allocate size? RedGrabberCB
 	grabber-cb/width: bmp/biWidth
 	grabber-cb/height: bmp/biHeight
-	grabber-cb/hWnd: hWnd
 	grabber-cb/vtbl: as int-ptr! SampleGrabberCB
+	grabber-cb/state: 0
+	h: bmp/biHeight
+	if h < 0 [h: 0 - h]
+	grabber-cb/cap: bmp/biWidth * h * 4						;-- samples are 32bpp under both draw engines
+	grabber-cb/stg: allocate grabber-cb/cap
 	cam/grabber-cb: as int-ptr! grabber-cb
 
 	grabber/SetCallback cam/grabber as int-ptr! grabber-cb 1

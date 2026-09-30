@@ -160,26 +160,22 @@ toggle-preview: func [
 	]
 ]
 
-still-image-handler: func [
+still-image-handler: func [				;-- on an AVFoundation queue: parks the JPEG, the main thread builds the cell
 	[cdecl]
 	block	[block_literal!]
 	buffer	[Cocoa-handle!]
 	error	[Cocoa-handle!]
 	/local
-		values	[red-value!]
 		data	[Cocoa-handle!]
 ][
 	if error <> 0 [exit]		;-- error occur
 
-	values: get-face-values as Cocoa-handle! block/value
 	data: objc_msgSend [
 		objc_getClass "AVCaptureStillImageOutput"
 		sel_getUid "jpegStillImageNSDataRepresentation:"
 		buffer
 	]
-	image/init-image
-		as red-image! values + FACE_OBJ_IMAGE
-		OS-image/load-nsdata as int-ptr! data
+	objc_setAssociatedObject as Cocoa-handle! block/value RedCameraDataKey data OBJC_ASSOCIATION_RETAIN
 ]
 
 snap-camera: func [				;-- capture an image of current preview window
@@ -187,10 +183,11 @@ snap-camera: func [				;-- capture an image of current preview window
 	/local
 		blk			[block_literal!]
 		isa			[Cocoa-handle!]
-		image		[Cocoa-handle!]
+		img-out		[Cocoa-handle!]
 		connection	[Cocoa-handle!]
 		layer		[Cocoa-handle!]
 		orientation [integer!]
+		data		[Cocoa-handle!]
 		sel			[Cocoa-handle!]
 ][
 	blk: declare block_literal!
@@ -206,8 +203,8 @@ snap-camera: func [				;-- capture an image of current preview window
 	blk/invoke: as int-ptr! :still-image-handler
 	blk/descriptor: as int-ptr! objc_block_descriptor
 	blk/value: as int-ptr! camera
-	image: objc_getAssociatedObject camera RedCameraImageKey
-	connection: objc_msgSend [image sel_getUid "connectionWithMediaType:" AVMediaTypeVideo]
+	img-out: objc_getAssociatedObject camera RedCameraImageKey
+	connection: objc_msgSend [img-out sel_getUid "connectionWithMediaType:" AVMediaTypeVideo]
 
 	;-- Update the orientation on the still image output video connection before capturing
 	;layer: objc_msgSend [camera sel_getUid "layer"]
@@ -216,11 +213,19 @@ snap-camera: func [				;-- capture an image of current preview window
 	;objc_msgSend [connection sel_getUid "setVideoOrientation:" orientation]
 
 	objc_msgSend [
-		image
+		img-out
 		sel_getUid "captureStillImageAsynchronouslyFromConnection:completionHandler:"
 		connection
 		blk
 	]
 	sel: sel_getUid "isCapturingStillImage"
-	until [zero? objc_msgSend [image sel]]
+	until [zero? objc_msgSend [img-out sel]]
+
+	data: objc_getAssociatedObject camera RedCameraDataKey
+	unless zero? data [
+		image/init-image
+			as red-image! (get-face-values camera) + FACE_OBJ_IMAGE
+			OS-image/load-nsdata as int-ptr! data
+		objc_setAssociatedObject camera RedCameraDataKey 0 OBJC_ASSOCIATION_ASSIGN
+	]
 ]

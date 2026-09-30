@@ -222,6 +222,7 @@ Red/System [
 #define RedCameraImageKey		4000FFF4h
 #define RedSecureFieldKey		4000FFF5h
 #define RedPairSizeKey			4000FFF6h
+#define RedCameraDataKey		4000FFF7h
 #define RedTimerKey				4000FFFAh
 #define RedFieldEditorKey		4000FFFBh
 #define RedAllOverFlagKey		4000FFFCh

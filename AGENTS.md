@@ -70,6 +70,7 @@
 - Fixed buffers never appear in that walk: `alloc-fixed-series` builds its buffer with raw `allocate`, not from a series frame, so `gen/immune` is always 0
 - `gen/*` sums are `float!` on purpose - a cumulative `integer!` wraps (recycle-test passed a billion live buffer-bytes in 400 cycles) and the ratios printed from it become lies
 - Cumulative GC counters are NOT comparable across builds: three builds of one source put recycle-test's gap-pin total at 2, 0 and 1, because the unit's own code addresses feed the conservative scan. Only per-cycle decisions (`pin causes`/`pin evidence`) and assertion counts survive a rebuild; within one binary the counters are stable across runs
+- Only the main thread allocates: the camera capture callbacks run on a foreign thread and touch no Red heap - Windows copies the sample into a `RedGrabberCB/stg` buffer the main thread `allocate`d and handshakes on an atomic `state`, macOS parks the JPEG `NSData` in an associated object for `snap-camera` to build the cell from. `collector/running?` was a TOCTOU over an unsynchronised two-writer bump pointer, not a guard (proposal P6)
 
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps
@@ -85,6 +86,7 @@
 - `objc_msgSend` is not Apple-variadic - trailing args go in registers
 - `NSScreen` objects are recreated - use `CGDirectDisplayID` for stable identity
 - `__mod_term_func` doesn't work - use `atexit` instead
+- `objc_setAssociatedObject` is thread-safe - it is how the AVFoundation capture queue hands a `NSData` to the main thread without the foreign thread touching the Red heap
 - Dev mode: `@loader_path/libRedRT.dylib`, release: embedded runtime
 
 ### Windows

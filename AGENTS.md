@@ -14,6 +14,8 @@
 - Target registry: `system/target-registry.red` is the only place targets are declared
 - The hybrid compiler builds only Windows X86-64, Darwin-ARM64 and Linux X86-64/ARM64 - `-t MSDOS` and any IA-32/ARM name is refused as "unknown compilation target", so a 32-bit layout can never be observed here
 - Toolchain resources are generated at build time in `build/generated/red-toolchain-resources.generated.red` - always regenerate before building toolchain
+- That archive is the only route a `runtime/` edit takes into an artifact: a program compiled by binary N runs *N's* archive, while N's own GC came from N-1's. So one fresh toolchain tests a runtime change in a program, and a second generation tests it in a compiler's own GC. Discriminator that an artifact carries the edit: a new `print-line` in `collector/dump-stats`, run with `RED_GC_STATS=1`
+- Because that generated file is shared, a toolchain build changes what every *other* compile embeds mid-flight: per-attempt output sizes are only comparable within one generated-file state
 - Use `build-red-toolchain.red` which regenerates automatically
 - Delete entire output directory (not just libRedRT.dll) to force runtime rebuild
 
@@ -49,6 +51,8 @@
 - Collector compacts series frames - raw buffer pointers die at allocations
 - Use cell index (move-invariant) instead of raw pointers across allocations
 - Conservative stack scanning: gap words cannot root series, only declared locals
+- The stack scan's sort span and stored span are one span: `nb` is read off the write cursor, because qsort permutes every pair it covers while the relocation sweep stops at `stk-tail`. Counting "stored or pinned" instead sorts past that bound and orphans a live `(value, slot)` pair, whose slot then keeps a raw pointer into reclaimed memory
+- `stack refs : N pairs sorted, M relocated` (RED_GC_STATS) witnesses that bound: a toolchain self-compile relocates ~10% of its recorded pairs, so an orphan shows up there, while a small stress unit relocates ~0.02% and shows nothing
 - `RED_GC_STRESS=N` forces collection every N allocations for testing
 - Dev mode bitmap selection: check if return address is in runtime image
 - Frame bitmaps are two streams over one slot numbering: pointers, then node-handle! flags

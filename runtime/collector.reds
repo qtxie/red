@@ -53,6 +53,14 @@ collector: context [
 		mark-time	 [float!]							;-- cumulative marking seconds		(RED_GC_STATS)
 		scan-time	 [float!]							;-- cumulative native stack scan seconds
 		sweep-time	 [float!]							;-- cumulative sweep/compaction seconds
+		;-- The mark envelope split, so a claim about *which part* of marking costs is checkable
+		;-- rather than argued: the root block, the two tables, the Red value stack, the rest of
+		;-- the roots, and the frame/registry inventory rebuild that closes the envelope.
+		mark-root	 [float!]
+		mark-table	 [float!]
+		mark-stk	 [float!]
+		mark-glob	 [float!]
+		mark-reb	 [float!]
 		moved-series [integer!]							;-- series buffers relocated by compaction
 		moved-bytes  [integer!]							;-- payload bytes relocated
 		stack-slots  [integer!]							;-- conservative stack words examined
@@ -117,7 +125,7 @@ collector: context [
 	;-- probe (the nursery was measured with it) and not something a timing run should pay.
 	time?: no											;-- RED_GC_TIME: time the cycle, and only that
 	age?:	 no											;-- RED_GC_AGE: stamp buffer ages
-	gc-line: as c-string! allocate 128					;-- the per-cycle line, formatted in place
+	gc-line: as c-string! allocate 256					;-- the per-cycle line: ten columns, formatted in place
 
 	;-- Buffer age, carried in bits 5-7 of the series flags word. They are the only
 	;-- bits a flag rewrite leaves alone: `flag-unit-mask` (FFFFFFE0h) preserves them
@@ -318,6 +326,11 @@ collector: context [
 		stats/mark-time:		0.0
 		stats/scan-time:		0.0
 		stats/sweep-time:		0.0
+		stats/mark-root:		0.0
+		stats/mark-table:		0.0
+		stats/mark-stk:			0.0
+		stats/mark-glob:		0.0
+		stats/mark-reb:			0.0
 		stats/moved-series:		0
 		stats/moved-bytes:		0
 		stats/stack-slots:		0
@@ -2462,6 +2475,9 @@ collector: context [
 		sprintf [buf "  scan time     : %.1f ms" stats/scan-time * 1000.0]  print-line buf
 		sprintf [buf "  sweep time    : %.1f ms" stats/sweep-time * 1000.0] print-line buf
 		sprintf [buf "  total time    : %.1f ms" (stats/mark-time + stats/scan-time + stats/sweep-time) * 1000.0] print-line buf
+		sprintf [buf "  mark split    : root %.1f, tables %.1f, value stack %.1f, other roots %.1f, inventory rebuild %.1f ms"
+			stats/mark-root * 1000.0 stats/mark-table * 1000.0 stats/mark-stk * 1000.0
+			stats/mark-glob * 1000.0 stats/mark-reb * 1000.0] print-line buf
 		print-line ["  moved series  : " stats/moved-series]
 		print-line ["  moved bytes   : " stats/moved-bytes]
 		print-line ["  stack slots   : " stats/stack-slots]
@@ -2503,6 +2519,8 @@ collector: context [
 				timed?	[logic!]
 				t0 t1 t2 [float!]						;-- phase start stamps (RED_GC_STATS)
 				d-mark d-scan d-sweep [float!]			;-- this cycle's phase durations
+				ta tb tc td te [float!]					;-- stamps inside the mark envelope
+				d-root d-table d-stk d-glob d-reb [float!]
 		#if debug? = yes [
 			file	[c-string!]
 			saved	[integer!]
@@ -2519,6 +2537,11 @@ collector: context [
 		d-mark: 0.0
 		d-scan: 0.0
 		d-sweep: 0.0
+		d-root: 0.0
+		d-table: 0.0
+		d-stk: 0.0
+		d-glob: 0.0
+		d-reb: 0.0
 		if timed? [t0: platform/perf-time]
 
 		#if debug? = yes [if verbose > 1 [
@@ -2553,15 +2576,18 @@ collector: context [
 		mark-queue/count: 0
 
 		mark-block root
+		if timed? [ta: platform/perf-time  d-root: ta - t0]
 		#if debug? = yes [if verbose > 1 [probe "marking symbol table"]]
 		_hashtable/mark symbol/table			;-- will mark symbols
 		#if debug? = yes [if verbose > 1 [probe "marking ownership table"]]
 		_hashtable/mark ownership/table
+		if timed? [tb: platform/perf-time  d-table: tb - ta]
 
 		#if debug? = yes [if verbose > 1 [probe "marking stack"]]
 		keep :arg-stk/node
 		keep :call-stk/node
 		mark-values stack/bottom stack/top
+		if timed? [tc: platform/perf-time  d-stk: tc - tb]
 		
 		#if debug? = yes [if verbose > 1 [probe "marking globals"]]
 			global-node: global-ctx
@@ -2579,10 +2605,11 @@ collector: context [
 			]
 			marker: marker + 1
 		]
+		if timed? [td: platform/perf-time  d-glob: td - tc]
 		
 		#if debug? = yes [if verbose > 1 [probe "scanning native stack"]]
 		frames-list/rebuild								;-- refresh registry chunks and series frames list
-		if timed? [t1: platform/perf-time  d-mark: t1 - t0]
+		if timed? [t1: platform/perf-time  d-reb: t1 - td  d-mark: t1 - t0]
 		scan-stack-refs yes
 		mark-pinned-frames
 		if timed? [t2: platform/perf-time  d-scan: t2 - t1]
@@ -2607,6 +2634,11 @@ collector: context [
 			stats/mark-time:  stats/mark-time  + d-mark
 			stats/scan-time:  stats/scan-time  + d-scan
 			stats/sweep-time: stats/sweep-time + d-sweep
+			stats/mark-root:  stats/mark-root  + d-root
+			stats/mark-table: stats/mark-table + d-table
+			stats/mark-stk:   stats/mark-stk   + d-stk
+			stats/mark-glob:  stats/mark-glob  + d-glob
+			stats/mark-reb:   stats/mark-reb   + d-reb
 			;-- Print here rather than at exit: a plain executable never reaches
 			;-- red/cleanup (only libRed and View do), so an exit hook would
 			;-- print nothing. Throttled so per-cycle I/O cannot distort the
@@ -2619,11 +2651,18 @@ collector: context [
 			;-- RED_GC_TIME: the counters and the dump stay off, so the cycle timed here is
 			;-- the one a production build runs. Cumulative, so the last line of a run is its
 			;-- total, and printed after the stamps, so the write itself is not on the clock.
+			;-- The mark column comes first and its five parts follow, in envelope order:
+			;-- they sum to it, so a split that does not add up means a stamp moved.
 			if time? [
 				sprintf [
-					gc-line "gct %d %.2f %.2f %.2f %.2f"
+					gc-line "gct %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f"
 					stats/cycles
 					stats/mark-time * 1000.0
+					stats/mark-root * 1000.0
+					stats/mark-table * 1000.0
+					stats/mark-stk * 1000.0
+					stats/mark-glob * 1000.0
+					stats/mark-reb * 1000.0
 					stats/scan-time * 1000.0
 					stats/sweep-time * 1000.0
 					(stats/mark-time + stats/scan-time + stats/sweep-time) * 1000.0

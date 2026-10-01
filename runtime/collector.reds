@@ -61,6 +61,8 @@ collector: context [
 		mark-stk	 [float!]
 		mark-glob	 [float!]
 		mark-reb	 [float!]
+		cells		 [float!]							;-- cells examined by the mark walk (counted when
+														;-- either GC report is on): the volume behind "marking got slower"
 		moved-series [integer!]							;-- series buffers relocated by compaction
 		moved-bytes  [integer!]							;-- payload bytes relocated
 		stack-slots  [integer!]							;-- conservative stack words examined
@@ -125,7 +127,8 @@ collector: context [
 	;-- probe (the nursery was measured with it) and not something a timing run should pay.
 	time?: no											;-- RED_GC_TIME: time the cycle, and only that
 	age?:	 no											;-- RED_GC_AGE: stamp buffer ages
-	gc-line: as c-string! allocate 256					;-- the per-cycle line: ten columns, formatted in place
+	count?: no											;-- either report: the run counters the dump prints
+	gc-line: as c-string! allocate 256					;-- the per-cycle line, formatted in place
 
 	;-- Buffer age, carried in bits 5-7 of the series flags word. They are the only
 	;-- bits a flag rewrite leaves alone: `flag-unit-mask` (FFFFFFE0h) preserves them
@@ -331,6 +334,7 @@ collector: context [
 		stats/mark-stk:			0.0
 		stats/mark-glob:		0.0
 		stats/mark-reb:			0.0
+		stats/cells:			0.0
 		stats/moved-series:		0
 		stats/moved-bytes:		0
 		stats/stack-slots:		0
@@ -360,6 +364,11 @@ collector: context [
 		stats?:  read-flag-env #u16 "RED_GC_STATS" "RED_GC_STATS"
 		time?:   read-flag-env #u16 "RED_GC_TIME" "RED_GC_TIME"
 		age?:    read-flag-env #u16 "RED_GC_AGE" "RED_GC_AGE"
+		;-- The run counters are printed by the dump *and* by the per-cycle line, so
+		;-- either report has to fill them: a counter that only one gate turns on reads
+		;-- zero in the report that shows it.
+		count?:  any [stats? time?]
+		memory/hits?: count?
 		check-abi
 	]
 
@@ -1257,6 +1266,9 @@ collector: context [
 		#if debug? = yes [if verbose > 1 [len: -1 indent: indent + 1]]
 		
 		while [value < tail][
+			if count? [stats/cells: stats/cells + 1.0]		;-- the volume counter, so "mark got
+															;-- slower" can be read as either more
+															;-- cells or dearer cells
 			#if debug? = yes [if verbose > 1 [
 				print "^/"
 				loop indent * 4 [print "  "]
@@ -2478,6 +2490,8 @@ collector: context [
 		sprintf [buf "  mark split    : root %.1f, tables %.1f, value stack %.1f, other roots %.1f, inventory rebuild %.1f ms"
 			stats/mark-root * 1000.0 stats/mark-table * 1000.0 stats/mark-stk * 1000.0
 			stats/mark-glob * 1000.0 stats/mark-reb * 1000.0] print-line buf
+		sprintf [buf "  mark cells    : %.0f examined" stats/cells] print-line buf
+		sprintf [buf "  handle walks  : %.0f registry resolutions, %.0f of them from resolve-series" memory/handle-hits memory/series-walks] print-line buf
 		print-line ["  moved series  : " stats/moved-series]
 		print-line ["  moved bytes   : " stats/moved-bytes]
 		print-line ["  stack slots   : " stats/stack-slots]
@@ -2652,10 +2666,15 @@ collector: context [
 			;-- the one a production build runs. Cumulative, so the last line of a run is its
 			;-- total, and printed after the stamps, so the write itself is not on the clock.
 			;-- The mark column comes first and its five parts follow, in envelope order:
-			;-- they sum to it, so a split that does not add up means a stamp moved.
+			;-- they sum to it, so a split that does not add up means a stamp moved. The last three
+			;-- columns are counts, not times: cells the mark walk examined, registry
+			;-- walks the resolvers made (the collector's own hops are in that count, and they are
+			;-- bounded by the cells column), and how many of those walks came through
+			;-- resolve-series. Divide a phase's milliseconds by its own count and
+			;-- "got slower" becomes a price per hop -- that is what tells more work from dearer work.
 			if time? [
 				sprintf [
-					gc-line "gct %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f"
+					gc-line "gct %d %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.2f %.0f %.0f %.0f"
 					stats/cycles
 					stats/mark-time * 1000.0
 					stats/mark-root * 1000.0
@@ -2666,6 +2685,9 @@ collector: context [
 					stats/scan-time * 1000.0
 					stats/sweep-time * 1000.0
 					(stats/mark-time + stats/scan-time + stats/sweep-time) * 1000.0
+					stats/cells
+					memory/handle-hits
+					memory/series-walks
 				]
 				print-line gc-line
 			]

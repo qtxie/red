@@ -99,6 +99,12 @@ memory: declare struct! [					; TBD: instanciate this structure per OS thread
 	stk-refs [ptr-ptr!]						;-- buffer of native-width stack references to update during GC
 	stk-tail [ptr-ptr!]						;-- tail pointer on stack references buffer
 	stk-sz	 [integer!]						;-- number of reference pairs in the buffer
+	handle-hits [float!]						;-- registry walks done by resolve-node and resolve-series,
+												;-- when either GC report is on: the mutator's
+												;-- handle traffic, counted per run
+	series-walks [float!]						;-- of those, the ones resolve-series made, so the
+												;-- two accessors can be told apart
+	hits?	 [logic!]						;-- count them: set by collector/init with its clock
 ]
 
 registry-chunk!: alias struct! [			;-- one fixed slice of the handle registry
@@ -179,6 +185,9 @@ init-mem: func [/local p [int-ptr!]][
 	memory/s-size:	 memory/s-start
 	memory/stk-sz:	 1000
 	memory/b-head:	 null
+	memory/handle-hits: 0.0
+	memory/series-walks: 0.0
+	memory/hits?:	 no							;-- the collector turns it on with its own clock
 	memory/stk-refs: as ptr-ptr! allocate memory/stk-sz * 2 * size? int-ptr!
 	node-registry/chunks: null
 	node-registry/count: 0
@@ -209,6 +218,7 @@ resolve-node: func [
 	;-- Release builds strip assert. Out-of-range / non-handle values must not
 	;-- AV when loading the registry entry (common after GC use-after-free).
 	if any [handle < 1 handle >= node-registry/next][return null]
+	if memory/hits? [memory/handle-hits: memory/handle-hits + 1.0]
 	slot: registry-slot handle
 	if null? slot/value [return null]
 	slot
@@ -233,7 +243,18 @@ resolve-series: func [
 		]
 		return null
 	]
-	slot: either any [handle < 1 handle >= node-registry/next][null][registry-slot handle]
+	;-- The counters sit inside the in-range branch: they count registry walks, which is what
+	;-- the handle representation costs, and the second says how many of them a series buffer
+	;-- access made -- resolve-node's own share is the total minus this one.
+	slot: either any [handle < 1 handle >= node-registry/next][
+		null
+	][
+		if memory/hits? [
+			memory/handle-hits: memory/handle-hits + 1.0
+			memory/series-walks: memory/series-walks + 1.0
+		]
+		registry-slot handle
+	]
 	if any [null? slot null? slot/value][
 		;-- Freed handle (nonzero). Do not fire[]: error formatting re-enters here.
 		print-line ["*** freed series handle: " handle]

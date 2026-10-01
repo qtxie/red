@@ -17,6 +17,8 @@
 - That archive is the only route a `runtime/` edit takes into an artifact: a program compiled by binary N runs *N's* archive, while N's own GC came from N-1's. So one fresh toolchain tests a runtime change in a program, and a second generation tests it in a compiler's own GC. Discriminator that an artifact carries the edit: a new `print-line` in `collector/dump-stats`, run with `RED_GC_STATS=1`
 - Because that generated file is shared, a toolchain build changes what every *other* compile embeds mid-flight: per-attempt output sizes are only comparable within one generated-file state
 - Use `build-red-toolchain.red` which regenerates automatically
+- A `test-linux-arm64` suite failure reproduces without a CI round trip: cross-build just that unit here (`build/self-hosting/merge-red64/hybrid-compiler293.exe -r -t Linux-ARM64 -o <name> <unit>`), `scp` it to `ssh armbian` and run it on native aarch64. Build it `-r`: a dev-mode unit runs the `libRedRT.so` beside it, so shipping only the executable measures a stale or missing runtime - one such run died as `*** Runtime Error 1: access violation` where CI had reported a failed assertion
+- Windows CLI Red units need `-t MSDOS-X86-64`; `-t Windows-X86-64` is the GUI target and refuses a unit without `Needs: View`
 - Delete entire output directory (not just libRedRT.dll) to force runtime rebuild
 
 ## Current Baselines
@@ -44,6 +46,7 @@
 - Register-homed pointer locals need shadow frame slots for GC
 - Stack arguments: AAPCS64 rounds to 8-byte slots, Apple packs at natural alignment
 - Variadic imports need `[[variadic]` declaration
+- Linux-ARM64 stack addresses have the sign bit set in their low 32 bits (`0x...F83DB8C0`), so `as integer!` of a frame pointer reads **negative** there and positive on Windows - a test that compares slot contents compares `int-ptr!`, never a truncation
 - Frame displacement > 255 bytes needs destination register for address materialization
 - ARM64 dev-mode binaries DO run under qemu-user; `undefined symbol: curl_easy_strerror` is a stale stub `~/qemu-stublibs/libcurl.so.4`, not a qemu limit
 
@@ -77,6 +80,7 @@
 - Frame bitmaps are two streams over one slot numbering: pointers, then node-handle! flags
 - A handle sharing a slot's high half (member at offset 4) is not bitmap-visible, and the probe now rejects it - only naming the slot in the handle bitmap roots it
 - Probe candidates must fill their whole word (a 64-bit address's low half can land inside the registry span); `stats/probe-alias` counts the rejections
+- What the probe's *unnamed* arm costs is now measured rather than argued (`ssh armbian`, 2026-10-02): ablating it - letting only bitmap-named slots root - takes `recycle-block-12`'s residue from 60 bytes to **0** on native aarch64 with the unit green, and under `RED_GC_STRESS`. So what keeps that series alive is a legitimate small integer in a scanned slot that happens to be a live index, not an address's low half (`probe-alias` counts 639 of those on the same run) and not a dead handle in a named slot, which no rule could reject. The arm is nearly redundant - 10631 acceptances for 2 sole-rootings there, 12 suite-wide - which is why `recycle-block-12` bounds the residue at 4 KB instead of asserting the upstream decrease: retiring the arm (proposal P16) is what buys the strict assert back, and its gate is `stats/probe-new` over both suites *and* a toolchain self-compile, not one unit
 - Dev-mode unit binaries run `libRedRT.dll` beside them - delete it or the output dir, or they measure the old runtime
 - `hashtable!` names its five buffers by `node-handle!`: marking a table reads the header and never rewrites it (`collector/keep-handle` takes a handle, `keep` the slot holding one)
 - `hashtable!/stride` is CELLS per node-key entry; `put-key`'s `alloc-tail-unit` wants bytes - redbin-codec/money/reactivity only catch a wrong size, and only at `RED_GC_STRESS=500`

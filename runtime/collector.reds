@@ -109,6 +109,16 @@ collector: context [
 
 	#define GC_STATS_PERIOD 100
 
+	;-- RED_GC_STATS cannot say what a cycle costs: it counts inside the paths it prices,
+	;-- and age-series-frames is a second full walk of every live header that lands in the
+	;-- mark number it reports. RED_GC_TIME times the production cycle and nothing else --
+	;-- one cumulative line per cycle, printed outside the timed envelope, so the last line
+	;-- of a run is the run's GC time. RED_GC_AGE keeps the age stamp, which is a policy
+	;-- probe (the nursery was measured with it) and not something a timing run should pay.
+	time?: no											;-- RED_GC_TIME: time the cycle, and only that
+	age?:	 no											;-- RED_GC_AGE: stamp buffer ages
+	gc-line: as c-string! allocate 128					;-- the per-cycle line, formatted in place
+
 	;-- Buffer age, carried in bits 5-7 of the series flags word. They are the only
 	;-- bits a flag rewrite leaves alone: `flag-unit-mask` (FFFFFFE0h) preserves them
 	;-- when a datatype restamps the unit, and `get-unit-mask` (1Fh) never reads them.
@@ -181,14 +191,16 @@ collector: context [
 		yes
 	]
 
-	read-stats-env: func [
+	read-flag-env: func [
+		utf16	[c-string!]								;-- the name, UTF-16 for platform/get-env on Windows
+		utf8	[c-string!]								;-- the same name for every other target
 		return: [logic!]
 		/local len [integer!]
 	][
 		#either OS = 'Windows [
-			len: platform/get-env #u16 "RED_GC_STATS" 0 0
+			len: platform/get-env utf16 0 0
 		][
-			len: platform/get-env "RED_GC_STATS" 0 0
+			len: platform/get-env utf8 0 0
 		]
 		len > 0											;-- presence only: any value switches it on
 	]
@@ -332,7 +344,9 @@ collector: context [
 		gen/productive:			0
 		gen/adequate:			0
 		stress?: read-stress-env :stress-period
-		stats?:  read-stats-env
+		stats?:  read-flag-env #u16 "RED_GC_STATS" "RED_GC_STATS"
+		time?:   read-flag-env #u16 "RED_GC_TIME" "RED_GC_TIME"
+		age?:    read-flag-env #u16 "RED_GC_AGE" "RED_GC_AGE"
 		check-abi
 	]
 
@@ -2457,16 +2471,19 @@ collector: context [
 		print-line ["  frame runs    : " stats/run-frames " of " frames-list/series/count " frames read, " stats/run-headers " headers published, " frames-list/runs/used " pool words (" stats/run-peak " peak)"]
 		;-- Ratios, not raw sums: the decision is a fraction, and a sum of two hundred
 		;-- cycles is not readable as one. Sums are printed beside them so the fraction
-		;-- can be checked against the cycle count on the third line.
-		sprintf [buf "  nursery live  : %.1f of %.1f buffer-passes, %.1f of %.1f bytes young of all live within %d passes of birth (%d immune)"
-			gen/young gen/live gen/young-bytes gen/live-bytes nursery-age gen/immune] print-line buf
-		sprintf [buf "  nursery minor : %.1f of %.1f buffers, %.1f of %.1f bytes the minor cycle reaches of all released -- by age %.1f/%.1f/%.1f/%.1f at 0/1/2/%d+"
-			gen/dead-young gen/dead gen/dead-young-bytes gen/dead-bytes
-			gen/die-0 gen/die-1 gen/die-2 gen/die-3 nursery-age] print-line buf
-		sprintf [buf "  nursery share : young is %.1f of live buffers, %.1f of live bytes per hundred; minor catches %.1f of dying buffers, %.1f of their bytes; %.1f of %d productive cycles (%d aged) sufficed"
-			(100.0 * gen/young / gen/live) (100.0 * gen/young-bytes / gen/live-bytes)
-			(100.0 * gen/dead-young / gen/dead) (100.0 * gen/dead-young-bytes / gen/dead-bytes)
-			(100.0 * (as float! gen/adequate) / (as float! gen/productive)) gen/productive gen/cycles] print-line buf
+		;-- can be checked against the cycle count on the third line. These are the age
+		;-- pass's numbers, so they are only printed when it ran (RED_GC_AGE).
+		if age? [
+			sprintf [buf "  nursery live  : %.1f of %.1f buffer-passes, %.1f of %.1f bytes young of all live within %d passes of birth (%d immune)"
+				gen/young gen/live gen/young-bytes gen/live-bytes nursery-age gen/immune] print-line buf
+			sprintf [buf "  nursery minor : %.1f of %.1f buffers, %.1f of %.1f bytes the minor cycle reaches of all released -- by age %.1f/%.1f/%.1f/%.1f at 0/1/2/%d+"
+				gen/dead-young gen/dead gen/dead-young-bytes gen/dead-bytes
+				gen/die-0 gen/die-1 gen/die-2 gen/die-3 nursery-age] print-line buf
+			sprintf [buf "  nursery share : young is %.1f of live buffers, %.1f of live bytes per hundred; minor catches %.1f of dying buffers, %.1f of their bytes; %.1f of %d productive cycles (%d aged) sufficed"
+				(100.0 * gen/young / gen/live) (100.0 * gen/young-bytes / gen/live-bytes)
+				(100.0 * gen/dead-young / gen/dead) (100.0 * gen/dead-young-bytes / gen/dead-bytes)
+				(100.0 * (as float! gen/adequate) / (as float! gen/productive)) gen/productive gen/cycles] print-line buf
+		]
 		print-line ["  handle slots  : " stats/handle-bits " bitmap-named, " stats/probe-roots " probed (" stats/probe-new " nothing else rooted)"]
 		print-line ["  probe aliases : " stats/probe-alias " words too wide to be an index"]
 		print-line ["  gap slots     : " stats/gap-words " examined over " stats/gap-frames " frames (deepest " stats/gap-scan "), " stats/gap-stores " recorded / " stats/gap-pins " pinned (deepest hit " stats/gap-depth ")"]
@@ -2498,7 +2515,7 @@ collector: context [
 		gc-frame: as ptr-ptr! system/stack/frame
 		gc-frame: gc-frame/value						;-- skip the collector's own frames when scanning
 
-		timed?: any [stats? verbose > 0]				;-- RED_GC_STATS, or a verbose debug build
+		timed?: any [stats? time? verbose > 0]			;-- RED_GC_STATS, RED_GC_TIME, or a verbose debug build
 		d-mark: 0.0
 		d-scan: 0.0
 		d-sweep: 0.0
@@ -2569,7 +2586,7 @@ collector: context [
 		scan-stack-refs yes
 		mark-pinned-frames
 		if timed? [t2: platform/perf-time  d-scan: t2 - t1]
-		if stats? [age-series-frames]				;-- after the stamp, before the sweep: it reads the marks
+		if age? [age-series-frames]				;-- after the stamp, before the sweep: it reads the marks
 
 		#if debug? = yes [if verbose > 1 [probe "sweeping..."]]
 		externals/sweep
@@ -2595,9 +2612,23 @@ collector: context [
 			;-- print nothing. Throttled so per-cycle I/O cannot distort the
 			;-- very timings it reports.
 			stats-countdown: stats-countdown - 1
-			if stats-countdown <= 0 [
+			if all [stats? stats-countdown <= 0][
 				stats-countdown: GC_STATS_PERIOD
 				dump-stats
+			]
+			;-- RED_GC_TIME: the counters and the dump stay off, so the cycle timed here is
+			;-- the one a production build runs. Cumulative, so the last line of a run is its
+			;-- total, and printed after the stamps, so the write itself is not on the clock.
+			if time? [
+				sprintf [
+					gc-line "gct %d %.2f %.2f %.2f %.2f"
+					stats/cycles
+					stats/mark-time * 1000.0
+					stats/scan-time * 1000.0
+					stats/sweep-time * 1000.0
+					(stats/mark-time + stats/scan-time + stats/sweep-time) * 1000.0
+				]
+				print-line gc-line
 			]
 		]
 

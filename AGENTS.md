@@ -54,6 +54,7 @@
 - The stack scan's sort span and stored span are one span: `nb` is read off the write cursor, because qsort permutes every pair it covers while the relocation sweep stops at `stk-tail`. Counting "stored or pinned" instead sorts past that bound and orphans a live `(value, slot)` pair, whose slot then keeps a raw pointer into reclaimed memory
 - `stack refs : N pairs sorted, M relocated` (RED_GC_STATS) witnesses that bound: a toolchain self-compile relocates ~10% of its recorded pairs, so an orphan shows up there, while a small stress unit relocates ~0.02% and shows nothing
 - `RED_GC_STRESS=N` forces collection every N allocations for testing
+- Cadence is bought with capacity: `alloc-series-buffer` grows the frame inventory once the free space across *all* series frames falls under half the live volume (`runway-short?`). Reading the slack of the one frame `find-space` hands back instead (compaction fills frames top-down, so that is the most packed one) made whether a program acquires a frame an accident of live layout - one probe ran 669 cycles on 3MB of frames where the same demand cost 225 cycles on 5MB
 - Dev mode bitmap selection: check if return address is in runtime image
 - Frame bitmaps are two streams over one slot numbering: pointers, then node-handle! flags
 - A handle sharing a slot's high half (member at offset 4) is not bitmap-visible, and the probe now rejects it - only naming the slot in the handle bitmap roots it

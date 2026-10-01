@@ -600,6 +600,31 @@ find-space: func [
 ]
 
 ;-------------------------------------------
+;-- Tell whether the series frames hold too little free space to defer another cycle.
+;-- A cycle compacts the live volume, so its cost scales with that volume, and the
+;-- runway between cycles has to scale with it too. Testing the slack of the single
+;-- frame find-space hands back instead left capacity to the luck of where live data
+;-- landed after a compaction, and the collection cadence with it.
+;-------------------------------------------
+runway-short?: func [
+	return: [logic!]
+	/local
+		frame [series-frame!]
+		free	[integer!]
+		live	[integer!]
+][
+	frame: memory/s-head
+	free: 0
+	live: 0
+	while [frame <> null][
+		free: free + (as-integer frame/tail - frame/heap)
+		live: live + (as-integer frame/heap - ((as byte-ptr! frame) + size? series-frame!))
+		frame: frame/next
+	]
+	free < (live >> 1)
+]
+
+;-------------------------------------------
 ;-- Allocate a series from the active series frame, return the series
 ;-------------------------------------------
 alloc-series-buffer: func [
@@ -642,7 +667,7 @@ alloc-series-buffer: func [
 				frame: find-space sz
 				if any [
 					null? frame
-					(as-integer frame/tail - frame/heap) < 52428	;- 1MB * 5%
+					runway-short?
 				][
 					if sz >= memory/s-size [ ;@@ temporary checks
 						memory/s-size: memory/s-max

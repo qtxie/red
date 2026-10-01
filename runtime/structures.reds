@@ -174,6 +174,12 @@ red-symbol!: alias struct! [
 ;-- reads these five words instead of rewriting them, and a frame that outlives
 ;-- an allocation can keep one. `stride` is the cell count of a node-key table's
 ;-- entries; hash!/map! leave it zero and use `indexes` as an array instead.
+;-- The three trailing `*-slot` fields cache the registry *slot* each of their handles
+;-- names, so a lookup reads a constant instead of recomputing one: a slot never moves,
+;-- while the buffer it points at can be relocated by compaction. The handles stay
+;-- authoritative -- marking reads them, never the caches. They sit after `type` because
+;-- the collector validates a candidate table by walking indexes..blk as one run of five
+;-- words, and the caches must not be inside that run.
 hashtable!: alias struct! [
 	size		[integer!]
 	indexes		[node-handle!]
@@ -186,6 +192,9 @@ hashtable!: alias struct! [
 	n-buckets	[integer!]
 	upper-bound	[integer!]
 	type		[integer!]
+	blk-slot	[node!]									;-- cache of the slot blk names
+	keys-slot	[node!]									;-- cache of the slot keys names
+	flags-slot	[node!]									;-- cache of the slot flags names
 ]
 
 red-integer!: alias struct! [

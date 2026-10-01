@@ -508,6 +508,15 @@ _hashtable: context [
 		upper-bound	[integer!]
 	]
 
+	;-- Write a buffer handle and the slot it names together, never apart: a cache is
+	;-- sound only if nothing can name a handle without naming the slot derived from it,
+	;-- so every replacement of h/blk, h/keys or h/flags goes through one of these four.
+	;-- The rs-hashtable! above is a different header, storing raw pointers, not covered.
+	name-blk:	func [h [hashtable!] node [node!]][h/blk: node-handle-of node  h/blk-slot: node]
+	name-keys:	func [h [hashtable!] node [node!]][h/keys: node-handle-of node  h/keys-slot: node]
+	name-flags:	func [h [hashtable!] node [node!]][h/flags: node-handle-of node  h/flags-slot: node]
+	name-blk-by-handle: func [h [hashtable!] hd [node-handle!]][h/blk: hd  h/blk-slot: resolve-node hd]
+
 	dump: func [
 		table	[node!]
 		/local
@@ -521,13 +530,13 @@ _hashtable: context [
 		s: as series! table/value
 		h: as hashtable! s/offset
 		int?: h/type >= HASH_TABLE_NODE_KEY
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		blk: s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		n-buckets: h/n-buckets
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
 		probe "^/== Deleted keys =="
 		j: 0
@@ -634,7 +643,7 @@ _hashtable: context [
 
 		if all [type >= HASH_TABLE_NODE_KEY h/blk <> 0][
 			vsize: h/stride
-			s: resolve-series h/blk
+			s: as series! h/blk-slot/value
 			val: s/offset
 			end: s/tail
 			while [val < end][
@@ -693,7 +702,7 @@ _hashtable: context [
 		assert type >= HASH_TABLE_NODE_KEY
 
 		vsize: h/stride
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		val: s/offset
 		end: s/tail
 		while [val < end][
@@ -838,7 +847,7 @@ _hashtable: context [
 		i: head
 		s: as series! node/value
 		h: as hashtable! s/offset
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		end: s/tail
 		value: s/offset + i
 		while [value < end][
@@ -849,7 +858,7 @@ _hashtable: context [
 													;-- consumes the next token in the source
 					s: as series! node/value		;-- preprocess-key can allocate
 					h: as hashtable! s/offset
-					s: resolve-series h/blk
+					s: as series! h/blk-slot/value
 					end: s/tail
 					value: s/offset + i				;-- re-derive the key cell after the allocation
 					put node value
@@ -870,7 +879,7 @@ _hashtable: context [
 			;-- buffers: re-resolve everything before reading the blk again.
 			s: as series! node/value
 			h: as hashtable! s/offset
-			s: resolve-series h/blk
+			s: as series! h/blk-slot/value
 			end: s/tail
 			value: s/offset + i
 		]
@@ -962,22 +971,22 @@ _hashtable: context [
 		ss: resolve-series destination
 		hh: as hashtable! ss/offset
 		copy-memory as byte-ptr! hh as byte-ptr! h size? hashtable!
-		b: copy-series resolve-series h/blk
+		b: copy-series (as series! h/blk-slot/value)
 		ss: resolve-series destination
 		hh: as hashtable! ss/offset
-		hh/blk: node-handle-of b
+		name-blk hh b
 		s: resolve-series symbols
 		h: as hashtable! s/offset
-		k: copy-series resolve-series h/keys
+		k: copy-series (as series! h/keys-slot/value)
 		ss: resolve-series destination
 		hh: as hashtable! ss/offset
-		hh/keys: node-handle-of k
+		name-keys hh k
 		s: resolve-series symbols
 		h: as hashtable! s/offset
-		k: copy-series resolve-series h/flags
+		k: copy-series (as series! h/flags-slot/value)
 		ss: resolve-series destination
 		hh: as hashtable! ss/offset
-		hh/flags: node-handle-of k
+		name-flags hh k
 
 		resolve-node destination
 	]
@@ -1377,9 +1386,9 @@ _hashtable: context [
 		flags: _alloc-bytes-filled n-buckets >> 2 #"^(AA)"
 		h/n-buckets: n-buckets
 		h/upper-bound: upper-bound
-		h/flags: node-handle-of flags
+		name-flags h flags
 		keys: _alloc-bytes n-buckets * size? int-ptr!
-		h/keys: node-handle-of keys
+		name-keys h keys
 
 		if type = HASH_TABLE_HASH [
 			indexes: _alloc-bytes-filled size * size? integer! #"^(FF)"
@@ -1392,7 +1401,7 @@ _hashtable: context [
 		][
 			data: resolve-node block-handle
 		]
-		h/blk: node-handle-of data
+		name-blk h data
 		if type >= HASH_TABLE_NODE_KEY [h/stride: vsize + 1]
 
 		if all [type < HASH_TABLE_NODE_KEY HANDLE?(block-handle)][
@@ -1437,9 +1446,9 @@ _hashtable: context [
 		ch: h/chains
 		array/clear resolve-node ch
 		flags: _alloc-bytes-filled new-buckets >> 2 #"^(AA)"
-		h/flags: node-handle-of flags
+		name-flags h flags
 		keys: _alloc-bytes new-buckets * size? int-ptr!
-		h/keys: node-handle-of keys
+		name-keys h keys
 
 		put-all node 0 1
 		if root? [stack/pop 1]
@@ -1453,7 +1462,7 @@ _hashtable: context [
 			s			[series!]
 			h			[hashtable!]
 			k			[int-ptr!]
-			flags new-blk [node!]
+			flags keys new-blk [node!]
 			blk			[node-handle!]
 			n-buckets new-size i sz len	vsize [integer!]
 			f			[float!]
@@ -1474,8 +1483,9 @@ _hashtable: context [
 		h/upper-bound: new-size
 		h/n-buckets: new-buckets
 		flags: _alloc-bytes-filled new-buckets >> 2 #"^(AA)"
-		h/flags: node-handle-of flags
-		h/keys: node-handle-of _alloc-bytes new-buckets * size? int-ptr!
+		name-flags h flags
+		keys: _alloc-bytes new-buckets * size? int-ptr!
+		name-keys h keys
 
 		len: h/stride								;-- cells per entry, key cell included
 		vsize: (len * size? cell!) - size? red-value!	;-- bytes past the key cell to carry over
@@ -1483,7 +1493,7 @@ _hashtable: context [
 		blk: h/blk									;-- node handle: a move keeps its value current
 		i: 0
 		new-blk: alloc-cells sz * len
-		h/blk: node-handle-of new-blk
+		name-blk h new-blk
 		while [
 			s: resolve-series blk					;-- re-resolve: put-key below can GC and move buffers
 			value: s/offset + i
@@ -1508,7 +1518,7 @@ _hashtable: context [
 			s			[series!]
 			h			[hashtable!]
 			blk k		[red-value!]
-			new-flags-node [node!]
+			new-flags-slot [node!]
 			keys flags new-flags int-key [int-ptr!]
 			i j mask step hash n-buckets new-size tmp ii sh idx [integer!]
 			f			[float!]
@@ -1528,9 +1538,9 @@ _hashtable: context [
 		new-size: as-integer f * _HT_HASH_UPPER + 0.5
 
 		either h/size >= new-size [j: 1][
-			new-flags-node: _alloc-bytes-filled new-buckets >> 2 #"^(AA)"
+			new-flags-slot: _alloc-bytes-filled new-buckets >> 2 #"^(AA)"
 			if n-buckets < new-buckets [
-				s: expand-series resolve-series h/keys new-buckets * size? int-ptr!
+				s: expand-series (as series! h/keys-slot/value) new-buckets * size? int-ptr!
 				s/tail: as cell! (as byte-ptr! s/offset) + s/size
 			]
 		]
@@ -1540,13 +1550,13 @@ _hashtable: context [
 			;-- be re-resolved from its node handle, which a move keeps current.
 			s: as series! node/value
 			h: as hashtable! s/offset
-			s: as series! new-flags-node/value
+			s: as series! new-flags-slot/value
 			new-flags: as int-ptr! s/offset
-			s: resolve-series h/blk
+			s: as series! h/blk-slot/value
 			blk: s/offset
-			s: resolve-series h/flags
+			s: as series! h/flags-slot/value
 			flags: as int-ptr! s/offset
-			s: resolve-series h/keys
+			s: as series! h/keys-slot/value
 			keys: as int-ptr! s/offset
 			until [
 				_HT_CAL_FLAG_INDEX(j ii sh)
@@ -1590,7 +1600,7 @@ _hashtable: context [
 				j = n-buckets
 			]
 			;@@ if h/n-buckets > new-buckets []			;-- shrink the hash table
-			h/flags: node-handle-of new-flags-node
+			name-flags h new-flags-slot
 			h/n-buckets: new-buckets
 			if h/type <> HASH_TABLE_MAP [h/n-occupied: h/size]
 			h/upper-bound: new-size
@@ -1604,7 +1614,7 @@ _hashtable: context [
 		return: [red-value!]
 		/local
 			value		 [red-value!]
-			s blk-node	 [series!]
+			s buf	 [series!]
 			h			 [hashtable!]
 			blk			 [byte-ptr!]
 			keys flags k [int-ptr!]
@@ -1625,13 +1635,13 @@ _hashtable: context [
 		]
 
 		entry: h/stride * size? cell!		;-- bytes per entry: key cell plus payload
-		blk-node: resolve-series h/blk
-		blk: as byte-ptr! blk-node/offset
-		len: as-integer blk-node/tail - as cell! blk
+		buf: as series! h/blk-slot/value
+		blk: as byte-ptr! buf/offset
+		len: as-integer buf/tail - as cell! blk
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		n-buckets: h/n-buckets + 1
 		x:	  n-buckets
@@ -1672,15 +1682,15 @@ _hashtable: context [
 		_HT_CAL_FLAG_INDEX((x - 1) ii sh)
 		case [
 			_BUCKET_IS_EMPTY(flags ii sh) [
-				k: as int-ptr! alloc-tail-unit blk-node entry
+				k: as int-ptr! alloc-tail-unit buf entry
 				;-- The allocation can run a GC pass, and compaction moves live
 				;-- buffers: re-resolve the table, keys and flags from their
 				;-- node handles before writing through the saved pointers.
 				s: as series! node/value
 				h: as hashtable! s/offset
-				s: resolve-series h/keys
+				s: as series! h/keys-slot/value
 				keys: as int-ptr! s/offset
-				s: resolve-series h/flags
+				s: as series! h/flags-slot/value
 				flags: as int-ptr! s/offset
 				k/2: key
 				keys/x: len
@@ -1721,12 +1731,12 @@ _hashtable: context [
 		h: as hashtable! s/offset
 		assert h/n-buckets > 0
 
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		blk: as byte-ptr! s/offset
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		mask: h/n-buckets - 1
 		hash: murmur3-x86-int key
@@ -1776,12 +1786,12 @@ _hashtable: context [
 		h: as hashtable! s/offset
 		assert h/n-buckets > 0
 
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		blk: as byte-ptr! s/offset
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		mask: h/n-buckets - 1
 		hash: murmur3-x86-int key
@@ -1843,7 +1853,7 @@ _hashtable: context [
 		type: h/type
 
 		errcode/value: HASH_TABLE_ERR_OK
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		key-idx: (as-integer (key - s/offset)) >> 4	;-- logical cell index: stable across buffer moves
 		if h/n-occupied >= h/upper-bound [			;-- update the hash table
 			idx: either h/n-buckets > (h/size << 1) [-1][1]
@@ -1855,7 +1865,7 @@ _hashtable: context [
 				;-- live buffers: re-derive the key cell from its logical index.
 				s: as series! node/value
 				h: as hashtable! s/offset
-				s: resolve-series h/blk
+				s: as series! h/blk-slot/value
 				return s/offset + key-idx
 			][
 				if type = HASH_TABLE_MAP [n-buckets: h/n-buckets + 1]
@@ -1866,17 +1876,17 @@ _hashtable: context [
 			;-- cell from its logical index.
 			s: as series! node/value
 			h: as hashtable! s/offset
-			s: resolve-series h/blk
+			s: as series! h/blk-slot/value
 			key: s/offset + key-idx
 		]
 
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		idx: key-idx
 		blk: s/offset
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		n-buckets: h/n-buckets + 1
 		x:	  n-buckets
@@ -1923,11 +1933,11 @@ _hashtable: context [
 								array/append-int resolve-node h/chains ch	;-- can also run one
 								s: as series! node/value			;-- re-resolve what the loop still uses
 								h: as hashtable! s/offset
-								s: resolve-series h/blk
+								s: as series! h/blk-slot/value
 								blk: s/offset
-								s: resolve-series h/keys
+								s: as series! h/keys-slot/value
 								keys: as int-ptr! s/offset
-								s: resolve-series h/flags
+								s: as series! h/flags-slot/value
 								flags: as int-ptr! s/offset
 								chain: resolve-node ch				;-- the chain node moved too, maybe
 								array/append-int chain keys/i
@@ -1980,7 +1990,7 @@ _hashtable: context [
 		;-- live buffers: re-derive the key cell from its logical index.
 		s: as series! node/value
 		h: as hashtable! s/offset
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		s/offset + key-idx
 	]
 
@@ -2004,12 +2014,12 @@ _hashtable: context [
 
 		n: 0
 		key-type: TYPE_OF(key)
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		blk: s/offset
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		mask: h/n-buckets - 1
 		i: start/value
@@ -2075,16 +2085,16 @@ _hashtable: context [
 			key/header: TYPE_SET_WORD	;-- set the header here for actions/compare, restore back later
 		]
 
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		if reverse? [
 			last?: yes
 		]
 		last-idx: either last? [-1][(as-integer (s/tail - s/offset)) >> 4]
 		blk: s/offset
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		mask: h/n-buckets - 1
 		hash: hash-value key no
@@ -2189,11 +2199,11 @@ _hashtable: context [
 			key: key + 1
 			key/header: MAP_KEY_DELETED
 		][										;-- hash!
-			s: resolve-series h/keys
+			s: as series! h/keys-slot/value
 			keys: as int-ptr! s/offset
-			s: resolve-series h/flags
+			s: as series! h/flags-slot/value
 			flags: as int-ptr! s/offset
-			s: resolve-series h/blk
+			s: as series! h/blk-slot/value
 			i: (as-integer key - s/offset) >> 4 + 1
 			s: resolve-series h/indexes
 			indexes: as int-ptr! s/offset
@@ -2244,17 +2254,17 @@ _hashtable: context [
 
 		ss: resolve-series new
 		hh: as hashtable! ss/offset
-		hh/blk: blk
+		name-blk-by-handle hh blk
 
 		one: copy-series resolve-series flags
 		ss: resolve-series new
 		hh: as hashtable! ss/offset
-		hh/flags: node-handle-of one
+		name-flags hh one
 
 		one: copy-series resolve-series keys
 		ss: resolve-series new
 		hh: as hashtable! ss/offset
-		hh/keys: node-handle-of one
+		name-keys hh one
 
 		if type = HASH_TABLE_HASH [
 			one: copy-series resolve-series indexes
@@ -2280,8 +2290,8 @@ _hashtable: context [
 		h: as hashtable! s/offset
 		h/size: 0
 		h/n-occupied: 0
-		array/clear resolve-node h/blk
-		s: resolve-series h/flags
+		array/clear h/blk-slot
+		s: as series! h/flags-slot/value
 		fill as byte-ptr! s/offset as byte-ptr! s/tail #"^(AA)"
 	]
 
@@ -2302,7 +2312,7 @@ _hashtable: context [
 		s: as series! node/value
 		h: as hashtable! s/offset
 
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		n: (as-integer s/tail - s/offset) >> 4
 		if head + size > n [size: n - head]
 		if n = size [	;-- clear all
@@ -2316,9 +2326,9 @@ _hashtable: context [
 
 		;h/n-occupied: h/n-occupied - size		;-- enable it when we have shrink
 		h/size: h/size - size
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		s: resolve-series h/indexes
 		indexes: (as int-ptr! s/offset) + head
@@ -2397,7 +2407,7 @@ _hashtable: context [
 		assert h/indexes <> 0
 		assert h/n-buckets > 0
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
 		ii: head							;-- save head
 
@@ -2435,7 +2445,7 @@ _hashtable: context [
 			head: ii						;-- restore head
 			either negative? offset [		;-- need to delete some entries
 				part: offset
-				s: resolve-series h/flags
+				s: as series! h/flags-slot/value
 				flags: as int-ptr! s/offset
 				while [negative? part][
 					index: indexes + head + part
@@ -2567,7 +2577,7 @@ _hashtable: context [
 		return: [integer!]			;-- return symbol id
 		/local
 			blk k		[red-symbol!]
-			s blk-node	[series!]
+			s buf	[series!]
 			h			[hashtable!]
 			p			[byte-ptr!]
 			keys flags	[int-ptr!]
@@ -2585,13 +2595,13 @@ _hashtable: context [
 			h: as hashtable! s/offset
 		]
 
-		blk-node: resolve-series h/blk
-		blk: as red-symbol! blk-node/offset
-		idx: (as-integer blk-node/tail - as cell! blk) >> 4
+		buf: as series! h/blk-slot/value
+		blk: as red-symbol! buf/offset
+		idx: (as-integer buf/tail - as cell! blk) >> 4
 
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
 		n-buckets: h/n-buckets + 1
 		x:	  n-buckets
@@ -2632,13 +2642,13 @@ _hashtable: context [
 
 		_HT_CAL_FLAG_INDEX((x - 1) ii sh)
 		either _BUCKET_IS_EMPTY(flags ii sh) [
-			k: as red-symbol! alloc-tail blk-node
+			k: as red-symbol! alloc-tail buf
 			keys/x: idx
 			len2: -1
 		][
 			len2: keys/x + 1
 			either any [strict? opt?][return len2][
-				k: as red-symbol! alloc-tail blk-node
+				k: as red-symbol! alloc-tail buf
 				_HT_CAL_FLAG_INDEX((xx - 1) ii sh)
 				keys/xx: idx
 			]
@@ -2648,8 +2658,8 @@ _hashtable: context [
 		h/size: h/size + 1
 		h/n-occupied: h/n-occupied + 1
 
-		blk-node: resolve-series h/blk
-		blk: as red-symbol! blk-node/offset
+		buf: as series! h/blk-slot/value
+		blk: as red-symbol! buf/offset
 
 		k/header: TYPE_UNSET
 		node: alloc-bytes len + 1		;-- add NUL bytes to make it compatible with C string
@@ -2705,11 +2715,11 @@ _hashtable: context [
 		;-- symbol/resolve may allocate/GC; re-resolve table and sub-series
 		s: resolve-series node
 		h: as hashtable! s/offset
-		s: resolve-series h/keys
+		s: as series! h/keys-slot/value
 		keys: as int-ptr! s/offset
-		s: resolve-series h/flags
+		s: as series! h/flags-slot/value
 		flags: as int-ptr! s/offset
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		blk: as red-word! s/offset
 
 		kk: either case? [hash][key]
@@ -2726,11 +2736,11 @@ _hashtable: context [
 				;-- re-resolve after possible GC inside symbol/resolve
 				s: resolve-series node
 				h: as hashtable! s/offset
-				s: resolve-series h/keys
+				s: as series! h/keys-slot/value
 				keys: as int-ptr! s/offset
-				s: resolve-series h/flags
+				s: as series! h/flags-slot/value
 				flags: as int-ptr! s/offset
-				s: resolve-series h/blk
+				s: as series! h/blk-slot/value
 				blk: as red-word! s/offset
 			][sym: k/symbol]
 			either kk <> sym [
@@ -2773,7 +2783,7 @@ _hashtable: context [
 	][
 		s: resolve-series ctx/symbols
 		h: as hashtable! s/offset
-		s: resolve-series h/blk
+		s: as series! h/blk-slot/value
 		as red-word! s/offset + idx
 	]
 
@@ -2786,7 +2796,7 @@ _hashtable: context [
 	][
 		s: resolve-series ctx/symbols
 		h: as hashtable! s/offset
-		resolve-series h/blk
+		(as series! h/blk-slot/value)
 	]
 
 	get-ctx-symbols: func [

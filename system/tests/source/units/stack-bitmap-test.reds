@@ -128,23 +128,31 @@ Red/System [
 		--test-- "sb-catch"
 			;-- The shadow slots the bitmap points at are the frame's own, so a
 			;-- nested catch that reloads them must still find what the prolog left.
+			;-- The comparisons stay pointers. On Linux-ARM64 the slot holds the frame's
+			;-- own address (0x...F83DB8C0 on the first armbian run), and truncating that
+			;-- to `integer!` kept only the low half, which is signed -- so the slot read
+			;-- negative and the test failed for how it printed, not for what it measured.
 			sb-catch-bitmap: func [
-				/local frame slot [ptr-ptr!] before [integer!]
+				/local frame slot [ptr-ptr!] before now [int-ptr!]
 			][
 				frame: as ptr-ptr! system/stack/frame
 				slot: frame - 5
-				before: as integer! slot/value
-				--assert before > 0
+				before: slot/value
+				--assert before <> null
 				catch 1 [
-					--assert (as integer! slot/value) = before
+					now: slot/value
+					--assert now = before
 					catch 2 [
-						--assert (as integer! slot/value) = before
+						now: slot/value
+						--assert now = before
 						throw 2
 					]
-					--assert (as integer! slot/value) = before
+					now: slot/value
+					--assert now = before
 					throw 1
 				]
-				--assert (as integer! slot/value) = before
+				now: slot/value
+				--assert now = before
 			]
 			sb-catch-bitmap
 	]

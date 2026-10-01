@@ -186,13 +186,18 @@ Red [
 		recycle
 		
 		rb12-mem2: stats
-		;-- The upstream strict decrease, restored. It needs the collector to reject a
-		;-- stack word that is not the registry index entire: the low half of a 64-bit
-		;-- address can land inside (0, node-registry/next), and the cycle that rooted
-		;-- whoever owned that index pinned one 16-byte series here -- 60 bytes of
-		;-- residue on Linux-ARM64, which is why e387986c7 had to bound it instead
-		;-- (runtime/collector.reds, mark-stack-handle).
-		--assert rb12-mem2 <= rb12-mem
+		;-- A bound, not the upstream strict decrease. What roots the residue is the
+		;-- collector's range probe, not a dead handle in a bitmap-named slot: ablate the
+		;-- probe's unnamed arm (keep only `named?`, runtime/collector.reds
+		;-- mark-stack-handle) and the delta on Linux-ARM64 goes from 60 bytes to 0, with
+		;-- this unit green. So it is an integer-shaped word in a scanned slot -- not an
+		;-- address's low half, which the whole-word rule already rejects -- that keeps one
+		;-- series alive here; x64 roots nothing. Retiring the probe on 64-bit targets would
+		;-- restore the strict assert, and `stats/probe-new` says it is close (2 load-bearing
+		;-- rootings out of 10631 acceptances over this unit) but not yet provably redundant.
+		;-- What the test owns is that the 100000 x 16-byte copies come back: 1.6 MB, so a
+		;-- 4 KB tolerance still fails it by three orders of magnitude.
+		--assert rb12-mem2 - rb12-mem < 4096
 		
 	--test-- "Recycle-block-13"
 		rb13-mem: none

@@ -950,16 +950,17 @@ collector: context [
 		]
 	]
 	
-	keep-raw: func [
-		ptr		[ptr-ptr!]
+	;-- Mark the buffer a resolved registry entry names. Every other keep is this one
+	;-- behind a walk, so a caller that already holds the entry pays for the walk once:
+	;-- the mark walk resolves each handle it deep-marks and hands the entry down.
+	keep-node: func [
+		node	[node!]
 		return: [logic!]								;-- TRUE if newly marked, FALSE if already done
 		/local
-			node [node!]
 			s	 [series!]
 			new? [logic!]
 			flags [integer!]
 	][
-		node: as node! ptr/value
 		if any [null? node null? node/value][return no]	;-- an unbound slot names nothing
 		s: as series! node/value
 		flags: s/flags
@@ -968,33 +969,22 @@ collector: context [
 		new?
 	]
 
-	;-- Mark the series a node handle names. The slot form below is the same test
-	;-- through the word holding the handle; a root that is a plain value, like the
-	;-- table header _hashtable/mark is handed, needs no slot to be marked.
-	keep-handle: func [
-		handle	[node-handle!]
-		return: [logic!]								;-- TRUE if newly marked, FALSE if already done
-		/local
-			node  [node!]
-			s     [series!]
-			new?  [logic!]
-			flags [integer!]
+	keep-raw: func [
+		ptr		[ptr-ptr!]
+		return: [logic!]
 	][
-		if zero? handle [return no]
-		node: resolve-node handle
-		if any [null? node null? node/value][return no]
-		s: as series! node/value
-		flags: s/flags
-		new?: flags and flag-gc-mark = 0
-		if new? [s/flags: flags or flag-gc-mark]
-		new?
+		keep-node as node! ptr/value
 	]
 
+	;-- Mark the series a node handle names, from the slot holding the handle.
 	keep: func [
 		ptr		[int-ptr!]
 		return: [logic!]								;-- TRUE if newly marked, FALSE if already done
+		/local
+			node  [node!]
 	][
-		keep-handle ptr/value
+		node: resolve-node ptr/value					;-- null for 0, for a freed handle, out of range
+		keep-node node
 	]
 
 
@@ -1145,7 +1135,7 @@ collector: context [
 					either GET_UNIT(s) = 16 [
 						mark-block-node as int-ptr! sp
 					][
-						keep as int-ptr! sp
+						keep-node as node! entry			;-- the slot this walk already resolved
 						if GET_UNIT(s) = 1 [mark-hashtable-node entry]
 					]
 				]
@@ -1225,11 +1215,11 @@ collector: context [
 		if zero? ptr/value [exit]
 		phys: resolve-node ptr/value
 		if any [null? phys null? phys/value][exit]
-		keep ptr
+		keep-node phys
 		s: as series! phys/value
 		if s/flags and flag-gc-scan <> 0 [exit]
 		s/flags: s/flags or flag-gc-scan				;-- set before nested (cycle break)
-		ctx: TO_CTX(ptr/value)							;-- [context! function!|object!]
+		ctx: as red-context! (s) + 1					;-- TO_CTX's own shape: the entry it walked for is already held
 		slot: as red-value! ctx
 		_hashtable/mark ctx/symbols
 		unless ON_STACK?(ctx) [mark-block-node :ctx/values]
@@ -1396,7 +1386,7 @@ collector: context [
 		if zero? ptr/value [exit]
 		phys: resolve-node ptr/value
 		if any [null? phys null? phys/value][exit]
-		keep ptr
+		keep-node phys
 		s: as series! phys/value
 		if s/flags and flag-gc-scan <> 0 [exit]
 		s/flags: s/flags or flag-gc-scan				;-- set before nested (cycle break)

@@ -620,8 +620,8 @@ _hashtable: context [
 	][
 		node: resolve-node table			;-- null for 0, for a freed handle, out of range
 		if any [null? node null? node/value][exit]
-		collector/keep-handle table			;-- the header is a node too: it was marked
-											;-- on the way in when keep-raw did the job
+		collector/keep-node node			;-- the header is a node too: the walk above is what
+											;-- found it, so it is not walked for twice
 		s: as series! node/value
 		h: as hashtable! s/offset
 		type: h/type

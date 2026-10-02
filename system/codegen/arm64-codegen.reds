@@ -32,6 +32,7 @@ arm64-function-scratch!: alias struct! [
 	instruction-effects [int-ptr!]
 	switch-effect-links [int-ptr!]
 	switch-effect-users [int-ptr!]
+	switch-case-order [int-ptr!]
 	global-homes    [int-ptr!]
 	shadow-slots    [int-ptr!]
 	slot-refs       [int-ptr!]
@@ -138,6 +139,10 @@ arm64-codegen: context [
 	; arrive through dyld with argc/argv in X0/X1; a Linux entry starts on the
 	; kernel stack with argc at [sp].
 	target-abi: ABI_APPLE_AARCH64
+	; The level the module is being generated at. Like target-abi it is set once per
+	; generate call, because the instruction loop it steers has no argument slot for
+	; it; only the switch lowering reads it, to pick which shape to emit.
+	target-opt-level: 0
 	compiler-frame-register: arm64-encoder/FP
 	compiler-frame-active?: false
 	;-- Slots reserved below the frame pointer, shared with the collector's walk
@@ -5871,6 +5876,226 @@ arm64-codegen: context [
 		written
 	]
 
+	; SWITCH dispatch has two shapes here, and the records it reads are the same in
+	; both: the chain in compile-function tests every arm in source order, so the
+	; cost of a value is the number of arms standing in front of it, while the tree
+	; below sorts the records into three-way tests where a hit and a miss both cost
+	; one test per level. Arm targets, the DEFAULT edge, the first-match rule for
+	; duplicated values and every incoming edge the layout recorded stay exactly as
+	; the chain leaves them; only the tests change. See the x64 backend for the
+	; measurement that picked this shape, and for why the order below has to be the
+	; order the machine's test implements: signed for a signed selector, unsigned for
+	; an unsigned one, keys first and source position for equal keys so that the sort
+	; is total and both codegen passes agree.
+	;
+	; What differs is the arithmetic of a node. AArch64 branches are always four
+	; bytes, and a displacement is read from the branch's own address to the target's
+	; in this function's numbering, so the cursor this walk holds is already the
+	; address the layout predicted: no anchor converts anything, and a node reserves
+	; eight bytes for its two branches where x64 reserves twelve.
+	switch-case-key-less?: func [
+		switches [byte-ptr!]
+		base [integer!]
+		x y [integer!]
+		width [integer!]
+		unsigned? [logic!]
+		return: [logic!]
+		/local
+			a b [rsir-switch!]
+			high-a high-b low-a low-b [integer!]
+	][
+		a: as rsir-switch! (switches + ((base + x) * RSIR_SWITCH_SIZE))
+		b: as rsir-switch! (switches + ((base + y) * RSIR_SWITCH_SIZE))
+		low-a: a/low
+		low-b: b/low
+		either width = 8 [
+			high-a: a/high
+			high-b: b/high
+			if unsigned? [
+				high-a: high-a xor 80000000h
+				high-b: high-b xor 80000000h
+			]
+			if high-a <> high-b [return high-a < high-b]
+			low-a: low-a xor 80000000h
+			low-b: low-b xor 80000000h
+		][
+			if unsigned? [
+				low-a: low-a xor 80000000h
+				low-b: low-b xor 80000000h
+			]
+		]
+		low-a < low-b
+	]
+
+	switch-case-less?: func [
+		switches [byte-ptr!]
+		base [integer!]
+		x y [integer!]
+		width [integer!]
+		unsigned? [logic!]
+		return: [logic!]
+	][
+		if switch-case-key-less? switches base x y width unsigned? [return true]
+		if switch-case-key-less? switches base y x width unsigned? [return false]
+		x < y
+	]
+
+	; Shell sort with 3x+1 gaps over record positions: the tree's keys come out
+	; ascending without a key array of its own or a recursive walk.
+	sort-switch-cases: func [
+		switches [byte-ptr!]
+		base [integer!]
+		order [int-ptr!]
+		count [integer!]
+		width [integer!]
+		unsigned? [logic!]
+		/local
+			gap ahead behind before key [integer!]
+			less? [logic!]
+	][
+		gap: 1
+		while [gap < count][gap: (gap * 3) + 1]
+		while [gap > 0][
+			ahead: gap + 1
+			while [ahead <= count][
+				key: order/ahead
+				behind: ahead
+				while [behind > gap][
+					before: behind - gap
+					less?: switch-case-less? switches base key order/before width unsigned?
+					unless less? [break]
+					order/behind: order/before
+					behind: before
+				]
+				order/behind: key
+				ahead: ahead + 1
+			]
+			gap: gap / 3
+		]
+	]
+
+	; One tree test: the case constant into X16 against the selector already in X17,
+	; in the pair the chain emits per arm, kept instruction for instruction so a node
+	; costs what an arm costs.
+	emit-switch-test: func [
+		arm [rsir-switch!]
+		width [integer!]
+		code [byte-ptr!]
+		capacity written [integer!]
+		dry? [logic!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded [integer!]
+	][
+		at: either dry? [as byte-ptr! 0][code + written]
+		encoded: either all [
+			arm/high = 0
+			arm/low >= 0 arm/low <= 4095
+		][
+			arm64-encoder/compare-immediate at (capacity - written)
+				arm64-encoder/X17 arm/low width
+		][
+			encoded: arm64-encoder/move-immediate at (capacity - written)
+				arm64-encoder/X16 width arm/low arm/high
+			if encoded < 0 [return fail-code encoded 917 "emit-switch-test/code#1"]
+			written: written + encoded
+			at: either dry? [as byte-ptr! 0][code + written]
+			arm64-encoder/compare-register at (capacity - written)
+				arm64-encoder/X17 arm64-encoder/X16 width
+		]
+		if encoded < 0 [return fail-code encoded 918 "emit-switch-test/code#2"]
+		written + encoded
+	]
+
+	; One tree edge that leaves for a recorded address: the unconditional jump every
+	; path ends on, whether it is falling out of a subtree or reaching DEFAULT from a
+	; leaf.
+	emit-switch-exit: func [
+		offsets [int-ptr!]
+		target [integer!]
+		code [byte-ptr!]
+		capacity written [integer!]
+		dry? [logic!]
+		return: [integer!]
+		/local at [byte-ptr!] encoded displacement [integer!]
+	][
+		displacement: either dry? [0][offsets/target - written]
+		at: either dry? [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/branch-relative at (capacity - written) displacement
+		if encoded < 0 [return fail-code encoded 919 "emit-switch-exit/code#3"]
+		written + encoded
+	]
+
+	; Emits the tree over `order[lo..hi]`, keys ascending, and returns the cursor past
+	; it. Every path through a subtree leaves by a jump, so neither of a node's runs
+	; can be fallen into: the greater run sits right after the node's own two
+	; branches and the lesser run after that. The lesser run's address is therefore
+	; known only once the greater run has been sized, which is what the dry walk
+	; below pays for; it runs the same code the emitting walk runs, so the size check
+	; that guards every function guards this one too.
+	emit-switch-tree: func [
+		switches [byte-ptr!]
+		offsets [int-ptr!]
+		base [integer!]
+		order [int-ptr!]
+		lo hi [integer!]
+		default-target [integer!]
+		width [integer!]
+		unsigned? [logic!]
+		code [byte-ptr!]
+		capacity written [integer!]
+		dry? [logic!]
+		return: [integer!]
+		/local
+			arm [rsir-switch!]
+			at [byte-ptr!]
+			mid pivot arm-target greater lesser jump-at displacement encoded condition [integer!]
+	][
+		arm: as rsir-switch! (switches + ((base + order/lo) * RSIR_SWITCH_SIZE))
+		arm-target: arm/target
+		if lo = hi [
+			written: emit-switch-test arm width code capacity written dry?
+			if written < 0 [return written]
+			displacement: either dry? [0][offsets/arm-target - written]
+			at: either dry? [as byte-ptr! 0][code + written]
+			encoded: arm64-encoder/branch-condition at (capacity - written)
+				arm64-encoder/EQ displacement
+			if encoded < 0 [return fail-code encoded 920 "emit-switch-tree/code#4"]
+			written: written + encoded
+			return emit-switch-exit offsets default-target code capacity written dry?
+		]
+		mid: (lo + hi) / 2
+		pivot: order/mid
+		arm: as rsir-switch! (switches + ((base + pivot) * RSIR_SWITCH_SIZE))
+		arm-target: arm/target
+		written: emit-switch-test arm width code capacity written dry?
+		if written < 0 [return written]
+		jump-at: written
+		greater: emit-switch-tree switches offsets base order (mid + 1) hi
+			default-target width unsigned? code capacity (written + 8) yes
+		if greater < 0 [return greater]
+		; A two-key run leaves the lesser side of its root empty: the pivot is then
+		; the run's smallest key, and below it there is only DEFAULT.
+		lesser: either mid > lo [greater][offsets/default-target]
+		condition: either unsigned? [arm64-encoder/CC][arm64-encoder/LT]
+		displacement: either dry? [0][lesser - jump-at]
+		at: either dry? [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/branch-condition at (capacity - written)
+			condition displacement
+		if encoded < 0 [return fail-code encoded 921 "emit-switch-tree/code#5"]
+		written: written + encoded
+		displacement: either dry? [0][offsets/arm-target - written]
+		at: either dry? [as byte-ptr! 0][code + written]
+		encoded: arm64-encoder/branch-condition at (capacity - written)
+			arm64-encoder/EQ displacement
+		if encoded < 0 [return fail-code encoded 922 "emit-switch-tree/code#6"]
+		written: written + encoded
+		written: emit-switch-tree switches offsets base order (mid + 1) hi
+			default-target width unsigned? code capacity written dry?
+		if written < 0 [return written]
+		unless mid > lo [return written]
+		emit-switch-tree switches offsets base order lo (mid - 1)
+			default-target width unsigned? code capacity written dry?
+	]
 
 	compile-function: func [
 		view [rsir-view!]
@@ -5897,9 +6122,9 @@ arm64-codegen: context [
 			imported [rsir-import!]
 			sub-entry [rsir-instruction!]
 			overflow-scope [rsir-instruction!]
-			at [byte-ptr!]
+			at switches [byte-ptr!]
 			instruction-offsets instruction-depths result-offsets entry-types entry-kinds
-				entry-flags control-uses catch-depths [int-ptr!]
+				entry-flags control-uses catch-depths order [int-ptr!]
 			index ordinal written encoded depth slot source-slot target-slot
 			ref target-ref left-ref right-ref width kind operation opcode target left right folded
 			source-width target-width source-kind target-kind
@@ -5918,7 +6143,7 @@ arm64-codegen: context [
 								catch-level catch-record catch-unwind target-offset
 								current-catch-depth target-catch-depth expected-catch-depth
 				case-index return-count handler-offset return-size return-align return-hfa-kind
-					return-hfa-count return-chunk-offset return-chunk-size return-width
+					return-hfa-count return-chunk-offset return-chunk-size return-width arms
 			overflow-anchor overflow-target overflow-condition base-depth
 				shift-count last-math-condition
 				[integer!]
@@ -5927,7 +6152,7 @@ arm64-codegen: context [
 			tag-variant tag-width-value tag-slot
 				[integer!]
 				fallthrough? measure? comparison? literal? immediate? taken? pointer?
-				custom-call?
+				custom-call? unsigned? distinct?
 					reference-comparison? floating? region-link? tracked? right-ready?
 					syscall? atomic-old? atomic-overflow? packed-call?
 						aggregate-return? hfa-return? aggregate-copy? adopt-depth?
@@ -10483,44 +10708,19 @@ arm64-codegen: context [
 						region-base region-limit at (capacity - written)
 					if encoded < 0 [return fail-code encoded 793 "compile-function/code#255"]
 					written: written + encoded
+					switches: view/switches
 					case-index: 0
 					while [case-index < instruction/b][
-						switch-case: as rsir-switch! (view/switches
+						switch-case: as rsir-switch! (switches
 							+ ((instruction/a + case-index) * RSIR_SWITCH_SIZE))
 						target: switch-case/target
+						;-- Every record keeps its edge, including a value a duplicate
+						;-- hides: the layout has seen this arm before and must see it
+						;-- again whatever shape the tests come out in.
 						unless merge-control-target target depth fn view scratch
 							instruction-depths entry-types entry-kinds entry-flags [
 							return fail-invalid 378 "compile-function/instruction-depths#212"
 						]
-						at: either null? code [as byte-ptr! 0][code + written]
-						either all [
-							switch-case/high = 0
-							switch-case/low >= 0 switch-case/low <= 4095
-						][
-							encoded: arm64-encoder/compare-immediate at
-								(capacity - written) arm64-encoder/X17
-								switch-case/low result-width
-						][
-							encoded: arm64-encoder/move-immediate at
-								(capacity - written) arm64-encoder/X16 result-width
-								switch-case/low switch-case/high
-							if encoded < 0 [return fail-code encoded 794 "compile-function/code#256"]
-							written: written + encoded
-							at: either null? code [as byte-ptr! 0][code + written]
-							encoded: arm64-encoder/compare-register at
-								(capacity - written) arm64-encoder/X17
-								arm64-encoder/X16 result-width
-						]
-						if encoded < 0 [return fail-code encoded 795 "compile-function/code#257"]
-						written: written + encoded
-						displacement: either null? code [0][
-							instruction-offsets/target - written
-						]
-						at: either null? code [as byte-ptr! 0][code + written]
-						encoded: arm64-encoder/branch-condition at
-							(capacity - written) arm64-encoder/EQ displacement
-						if encoded < 0 [return fail-code encoded 796 "compile-function/code#258"]
-						written: written + encoded
 						case-index: case-index + 1
 					]
 					target: instruction/c
@@ -10539,14 +10739,83 @@ arm64-codegen: context [
 						instruction-depths entry-types entry-kinds entry-flags [
 						return fail-invalid 379 "compile-function/instruction-depths#213"
 					]
-					displacement: either null? code [0][
-						instruction-offsets/target - written
+					either all [target-opt-level = 2 instruction/b >= 4][
+						order: scratch/switch-case-order
+						case-index: 1
+						while [case-index <= instruction/b][
+							order/case-index: case-index - 1
+							case-index: case-index + 1
+						]
+						unsigned?: either signed-type? ref view [false][true]
+						sort-switch-cases switches instruction/a order instruction/b
+							result-width unsigned?
+						;-- One leaf per distinct value: a chain tests duplicated values in
+						;-- source order and the first match wins, while a tree reaches only
+						;-- one leaf per key, so it must hold the record the chain would
+						;-- have hit first. The sort keeps equal keys in source order, and
+						;-- distinctness is then a strictly-ascending test on the key alone.
+						arms: 1
+						case-index: 2
+						while [case-index <= instruction/b][
+							distinct?: switch-case-key-less? switches instruction/a
+								order/arms order/case-index result-width unsigned?
+							if distinct? [
+								arms: arms + 1
+								order/arms: order/case-index
+							]
+							case-index: case-index + 1
+						]
+						written: emit-switch-tree switches instruction-offsets
+							instruction/a order 1 arms target result-width unsigned?
+							code capacity written measure?
+						if written < 0 [return written]
+					][
+						case-index: 0
+						while [case-index < instruction/b][
+							switch-case: as rsir-switch! (switches
+								+ ((instruction/a + case-index) * RSIR_SWITCH_SIZE))
+							target: switch-case/target
+							at: either null? code [as byte-ptr! 0][code + written]
+							either all [
+								switch-case/high = 0
+								switch-case/low >= 0 switch-case/low <= 4095
+							][
+								encoded: arm64-encoder/compare-immediate at
+									(capacity - written) arm64-encoder/X17
+									switch-case/low result-width
+							][
+								encoded: arm64-encoder/move-immediate at
+									(capacity - written) arm64-encoder/X16 result-width
+									switch-case/low switch-case/high
+								if encoded < 0 [return fail-code encoded 794 "compile-function/code#256"]
+								written: written + encoded
+								at: either null? code [as byte-ptr! 0][code + written]
+								encoded: arm64-encoder/compare-register at
+									(capacity - written) arm64-encoder/X17
+									arm64-encoder/X16 result-width
+							]
+							if encoded < 0 [return fail-code encoded 795 "compile-function/code#257"]
+							written: written + encoded
+							displacement: either null? code [0][
+								instruction-offsets/target - written
+							]
+							at: either null? code [as byte-ptr! 0][code + written]
+							encoded: arm64-encoder/branch-condition at
+								(capacity - written) arm64-encoder/EQ displacement
+							if encoded < 0 [return fail-code encoded 796 "compile-function/code#258"]
+							written: written + encoded
+							case-index: case-index + 1
+						]
+						target: instruction/c
+						displacement: either null? code [0][
+							instruction-offsets/target - written
+						]
+						at: either null? code [as byte-ptr! 0][code + written]
+						encoded: arm64-encoder/branch-relative at
+							(capacity - written) displacement
+						if encoded < 0 [return fail-code encoded 797 "compile-function/code#259"]
+						written: written + encoded
 					]
-					at: either null? code [as byte-ptr! 0][code + written]
-					encoded: arm64-encoder/branch-relative at
-						(capacity - written) displacement
-					if encoded < 0 [return fail-code encoded 797 "compile-function/code#259"]
-					written: written + encoded
 					fallthrough?: false
 				]
 				instruction/op = OP_FAIL [
@@ -10726,6 +10995,7 @@ arm64-codegen: context [
 		target-abi: abi
 		if any [null? output capacity < 0][return fail-invalid 390 "generate/output#1"]
 		unless any [opt-level = 0 opt-level = 2][return fail-unsupported 908 "generate/opt-level#2"]
+		target-opt-level: opt-level
 		status: codegen-rsir-reader/open data size view
 		if status <> 0 [return status]
 		header: view/header
@@ -10756,8 +11026,8 @@ arm64-codegen: context [
 			return fail-limit 870 "generate/limit#12"
 		]
 		words: words + (header/instruction-count * 9)
-		if header/switch-count > ((2147483647 - words) / 2)[return fail-limit 871 "generate/limit#13"]
-		words: words + (header/switch-count * 2)
+		if header/switch-count > ((2147483647 - words) / 3)[return fail-limit 871 "generate/limit#13"]
+		words: words + (header/switch-count * 3)
 		if header/global-count > ((2147483647 - words) / 6)[return fail-limit 872 "generate/limit#14"]
 		words: words + (header/global-count * 6)
 		if header/function-count > (2147483647 - header/global-count)[
@@ -10813,7 +11083,9 @@ arm64-codegen: context [
 			scratch/instruction-effects + header/instruction-count
 		scratch/switch-effect-users:
 			scratch/switch-effect-links + header/switch-count
-		scratch/global-homes: scratch/switch-effect-users + header/switch-count
+		scratch/switch-case-order:
+			scratch/switch-effect-users + header/switch-count
+		scratch/global-homes: scratch/switch-case-order + header/switch-count
 		global-offsets: scratch/global-homes + header/global-count
 		global-sizes: global-offsets + header/global-count
 		global-owners: global-sizes + header/global-count

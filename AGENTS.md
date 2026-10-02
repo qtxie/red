@@ -42,6 +42,7 @@
 - Native View suite takes ~6 minutes with block-buffered output - don't attach debugger
 - `*/source/units/auto-tests/` holds generated sources and is gitignored: `run-red-system-tests.red` writes the dylib unit, `tests/source/units/make-run-all.red` the three batch drivers and their stripped copies
 - Windows Core-Release runs `run-red-run-all-tests.red` - three driver compiles plus `runtime/unicode-test.red` rather than sixty unit compiles: 18598 tests / 36000 assertions / 0 failed, ~9 min of which is `run-all-interp`'s interpreted pass - and that pass is 447 s of collector time, not interpreted work
+- `-O2` gate for x64 (no CI job passes the flag, so run it by hand): the three batch drivers give `run-all-comp1` 4262 tests / 7508 assertions, `run-all-comp2` 5133 / 10608 and `run-all-interp` 9191 / 17817 - 17886 tests / 35933 assertions / **0 failed** - and `red-toolchain-hybrid.red` self-compiles at `-O2` to a compiler whose `-O0` output is byte-identical to the `-O0`-built one apart from two PE timestamp bytes. Before the `incoming-argument-clobber` fix `series-test` failed `sort-str-3`/`sort-str-4` (6 assertions) at `-O2` only. `-O0` codegen is provably untouched by `-O2`-only passes: same source, same flags, the only differing bytes are the timestamp and the embedded output name
 
 ## Key Technical Facts
 
@@ -117,6 +118,7 @@
 ### Codegen
 - ARM64: X16/X17 are scratch, X19-X28 are callee-saved homes, X9-X15 are value temps
 - x64: System V ABI (Linux) vs Win64 ABI - different register counts and stack rules
+- x64 `-O2`: the register-home pool starts at R8, which is also Win64's *third argument* register, so materializing a promoted parameter's home in the prologue consumes the incoming value another parameter still holds. `emit-function-prologue` releases that slot from `state/incoming-arguments` (`incoming-argument-clobber`) so the read falls back on the frame home the spill above just wrote - a frameless parameter cannot be hit, because `discover-abi-constraints` pins its register as a fixed interval and keeps it out of the pool. SysV sets the mask to 0 and the ARM64 backend has no incoming-register read path, so this class of bug is Win64-only, `-O2`-only, and invisible at the shipping opt level
 - Import variables vs functions: different relocation types (GLOB_DAT vs PLT)
 - `#u16` literals must be interned as 16-bit units for alignment
 - Aggregate ABI: System V classifies per eightbyte, Win64 by total size

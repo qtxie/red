@@ -5891,6 +5891,47 @@ x64-codegen: context [
 		0
 	]
 
+	; The promoted homes are drawn from the allocator pool, whose first two GPRs
+	; (R8/R9) and first two vectors are also the Win64 incoming registers of the
+	; third and fourth arguments. A home landing on one of them stops that
+	; register carrying the parameter that arrived in it, so the bit naming that
+	; slot is released and a later read of it takes the frame home the spill
+	; above wrote instead. A parameter with no frame home keeps its register out
+	; of the pool -- discover-abi-constraints pins it as a fixed interval -- and a
+	; parameter never loses the value in its own register, so no release here can
+	; strand a read that has nowhere else to read from.
+	incoming-argument-clobber: func [
+		state [machine-state!]
+		parameters [byte-ptr!]
+		fn [rsir-function!]
+		table [type-table!]
+		homed-slot home-register [integer!]
+		floating? [logic!]
+		return: [integer!]
+		/local parameter [rsir-parameter!]
+			slot physical-slot victim-register [integer!]
+			victim-floating? [logic!]
+	][
+		if target-abi = ABI_SYSV [return 0]
+		slot: 1
+		while [slot <= fn/parameter-count][
+			physical-slot: slot + state/hidden-shift
+			if all [physical-slot <= 4 slot <> homed-slot][
+				parameter: as rsir-parameter! (parameters
+					+ ((fn/first-parameter + slot - 1) * RSIR_PARAMETER_SIZE))
+				victim-floating?: float-type? parameter/type table
+				if victim-floating? = floating? [
+					victim-register: either victim-floating? [
+						physical-slot - 1
+					][argument-register physical-slot]
+					if victim-register = home-register [return 1 << (physical-slot - 1)]
+				]
+			]
+			slot: slot + 1
+		]
+		0
+	]
+
 	; Emits the function prologue and materializes incoming parameters.
 	emit-function-prologue: func [
 		context [x64-function-context!]
@@ -5911,7 +5952,7 @@ x64-codegen: context [
 				encoded written frame-extra physical-slot displacement aggregate-width
 				target-offset catch-threshold allocation-size gpr-slot xmm-slot
 				stack-slot aggregate-count class-a class-b index-a index-b
-				value-size [integer!]
+				value-size clobber [integer!]
 			measure? floating? clear? aggregate-argument? register? [logic!]
 	][
 		module: context/module
@@ -6119,6 +6160,11 @@ x64-codegen: context [
 				floating?: float-type? parameter/type table
 				target-slot: storage-displacement storage-offsets index
 				if target-slot = 0 [return fail-invalid 60 "emit-function-prologue/target-slot#6"]
+				clobber: incoming-argument-clobber
+					state parameters fn table index home-register floating?
+				if clobber <> 0 [
+					state/incoming-arguments: state/incoming-arguments and (15 xor clobber)
+				]
 				at: either measure? [as byte-ptr! 0][code + written]
 				encoded: either floating? [
 					x64-encoder/xmm-frame-load at (capacity - written)

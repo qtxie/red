@@ -20,6 +20,8 @@
 - A `test-linux-arm64` suite failure reproduces without a CI round trip: cross-build just that unit here (`build/self-hosting/merge-red64/hybrid-compiler293.exe -r -t Linux-ARM64 -o <name> <unit>`), `scp` it to `ssh armbian` and run it on native aarch64. Build it `-r`: a dev-mode unit runs the `libRedRT.so` beside it, so shipping only the executable measures a stale or missing runtime - one such run died as `*** Runtime Error 1: access violation` where CI had reported a failed assertion
 - Windows CLI Red units need `-t MSDOS-X86-64`; `-t Windows-X86-64` is the GUI target and refuses a unit without `Needs: View`
 - Delete entire output directory (not just libRedRT.dll) to force runtime rebuild
+- Run `hybrid-compiler*.exe` from the repo root: from any other cwd it cannot read its own relative sources and dies as `*** Where: read / *** Near : unset`, which looks exactly like a codegen failure
+- A `*** Warning: type casting from pointer! to pointer!` whose payload decodes to `red>collector>mark-stack-handle` is the pre-existing one at `runtime/collector.reds:1138`, not leftover debug output from the arm under test
 
 ## Current Baselines
 
@@ -119,6 +121,11 @@
 - `#u16` literals must be interned as 16-bit units for alignment
 - Aggregate ABI: System V classifies per eightbyte, Win64 by total size
 - Frame bitmap records are written by both backends and read by the collector; only `system/tests/source/units/stack-bitmap-test.reds` (Red/System suite) covers the record itself
+- x64 `switch` has two lowerings, both inside `emit-control-operation` (`system/codegen/x64-codegen.reds:11969`): the CMP/JNE chain over case records in source order, and - at `opt-level 2` and only for >= 4 records - a balanced three-way decision tree (`sort-switch-cases`/`emit-switch-tree`). Duplicate keys are legal and the chain's first match is the semantics, so the tree sorts by key with source position as the tie-break and keeps one leaf per *distinct* key holding the record the chain would have hit first
+- Displacement convention differs per backend: x64 `instruction-offsets` are the layout's *predictions* (rewritten by `relax-branches`) and the emit cursor trails them by a per-function constant, so an edge aimed from the cursor must convert first - `anchor: instruction-offsets/index - instruction-start`, then `offsets/target - anchor - written - N`. ARM64 uses `offsets/target - written` with no `instruction-start` term; do not copy the anchor rule across backends
+- The switch tree is measured on the interpreted batch leg at **-15.17% of a rep** against HEAD at the same `-O2` (t=-52.67, faster 5/5 rounds, worst round -14.44%) and **-12.73%** against the shipping `-O0` (t=-8.32, 5/5) - with cycles (3761), marked cells and walks identical to 5e-5, so the win is price per cell (17.2 -> 14.7 ns), and `mark` -50 s of it is `mark root` -41.5 s + `mark tables` -8.5 s. Cost: runtime `.text` +0.54%, image +0.49% (Red suite) / +0.85% (Red/System suite), compile time +2 s on a 61 s build
+- `-O2` is the only opt flag the hybrid accepts (`-O1` is refused) and **no CI job passes it**, so the shipping runtime pays the chain. HEAD's own `-O2` also miscompiles `sort` (`series-test` `sort-str-3`/`sort-str-4`, 6 assertions; repro `build/gc-speed/b2probe/p-sort.red` - the `-r` build compiles `runtime/` from disk at program-build time, so the fault is in runtime sources built at `-O2`, not in this arm, which inherits the identical 6)
+- Gate an opt-level arm on the *whole* suite (`build/gc-speed/b2probe/gate-redsys.sh`, `gate-red.sh`: compile+run every unit with a chosen compiler/opt, TSV of bytes/rc/tests/asserts/failed, then diff unit-by-unit against HEAD). The `switch`-named units are a vacuous gate - 1-2 value cases each, under the >= 4 threshold - while 118/144 Red/System and 66/66 Red images change size at `-O2`, which is what proves the tree fired. Inertness at `-O0` is shown by a normalized disassembly diff of the `-O0` image against HEAD's, not by green tests
 
 ### macOS/Darwin
 - `Face-handle!` is `int64!` on ARM64, `integer!` on x86-64

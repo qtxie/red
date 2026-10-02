@@ -61,6 +61,13 @@ jobs:
         RED_COMPILER_ARGUMENTS: -t MSDOS-X86-64
       run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
 
+  # The Core units again, this time compiled in release mode. It goes through the
+  # batch drivers %make-run-all.red generates rather than the sixty units
+  # directly: the release-mode codegen a unit exercises is the same whether it
+  # stands alone or is #included by a driver, and three compiles instead of sixty
+  # is what keeps this job inside its timeout. The runner generates the drivers,
+  # which are build artifacts and so are not checked in, and adds the one runtime
+  # unit no driver carries.
   Core-Release:
     runs-on: windows-latest
     timeout-minutes: 90
@@ -76,7 +83,7 @@ jobs:
       env:
         RED_COMPILER: build/toolchain/bin/red-toolchain.exe
         RED_COMPILER_ARGUMENTS: -r -t MSDOS-X86-64
-      run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-unit-tests.red
+      run: tools/ci/run-suite.ps1 tools/self_hosting/run-red-run-all-tests.red
 
   Core-Debug:
     runs-on: windows-latest

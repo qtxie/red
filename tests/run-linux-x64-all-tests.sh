@@ -406,14 +406,25 @@ push-pop-test'
 		count=$((count + 1))
 	done
 
+	# %auto-tests/dylib-auto-test.reds is a build artifact, not a source: it names
+	# the two test libraries by the absolute path of the machine that generated it.
+	# So assemble this phase's copy from the templates that %run-red-system-tests.red
+	# assembles its own from, naming the libraries this phase just built.
 	dylib_source="$artifact_dir/dylib-auto-test-linux.reds"
 	quick_test_reds=$(wslpath -w "$root/quick-test/quick-test.reds" | \
 		tr '\\' '/' | sed 's|^\([A-Za-z]\):|/\1|')
-	sed \
-		-e "s|#include .*quick-test/quick-test.reds|#include %$quick_test_reds|" \
-		-e 's|libtest-dll1\.dll|libtest-dll1.so|g' \
-		-e 's|libtest-dll2\.dll|libtest-dll2.so|g' \
-		"$source_dir/auto-tests/dylib-auto-test.reds" >"$dylib_source"
+	{
+		sed \
+			-e "s|#include .*quick-test/quick-test.reds|#include %$quick_test_reds|" \
+			-e "s|###make-length###|$(wc -c <"$0")|" \
+			-e 's|###target###|Linux-X86-64-SO|' \
+			"$source_dir/dylib-test-script-header.txt"
+		sed \
+			-e "s|\*\*\*test-dll1\*\*\*|$artifact_dir/libtest-dll1.so|" \
+			-e "s|\*\*\*test-dll2\*\*\*|$artifact_dir/libtest-dll2.so|" \
+			"$source_dir/dylib-libs.txt"
+		cat "$source_dir/dylib-tests.txt" "$source_dir/dylib-test-script-footer.txt"
+	} >"$dylib_source"
 	dylib_binary="$artifact_dir/system-dylib-auto-test"
 	compile_program system-dylib-auto-test "$dylib_source" "$dylib_binary"
 	run_program system-dylib-auto-test "$dylib_binary"

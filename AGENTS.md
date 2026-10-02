@@ -38,6 +38,8 @@
 - Compiler tests exit 1 by design (compile-failures are expected); use claimed/unclaimed tracking
 - CI uses `pwsh` (PowerShell 7), not Windows PowerShell 5.1
 - Native View suite takes ~6 minutes with block-buffered output - don't attach debugger
+- `*/source/units/auto-tests/` holds generated sources and is gitignored: `run-red-system-tests.red` writes the dylib unit, `tests/source/units/make-run-all.red` the three batch drivers and their stripped copies
+- Windows Core-Release runs `run-red-run-all-tests.red` - three driver compiles plus `runtime/unicode-test.red` rather than sixty unit compiles: 18586 tests / 35933 assertions / 0 failed, ~9 min of which is `run-all-interp`'s interpreted pass
 
 ## Key Technical Facts
 

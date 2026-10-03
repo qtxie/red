@@ -75,7 +75,7 @@ jobs:
     - name: Resolve which generation is being published
       id: resolve
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         CALL_GENERATION: ${{ inputs.generation }}
         CALL_COMMIT: ${{ inputs.commit }}
         SOURCE_RUN: ${{ inputs.source-run }}
@@ -116,7 +116,7 @@ jobs:
 
     - name: Download seed artifacts
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         RUN_ID: ${{ steps.resolve.outputs.run-id }}
       run: |
         set -euo pipefail
@@ -145,15 +145,15 @@ jobs:
 
     - name: Publish the generation release
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GENERATION: ${{ steps.resolve.outputs.generation }}
         COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
         set -euo pipefail
         # Printed before the create: the 403 this step got said "not accessible
         # by integration", which names the caller as the Actions app, so what is
-        # in question is the credential's reach and not which env var carried it.
-        # GET on the repo answers that with the caller's own view of it.
+        # in question is that credential's reach. GET on the repo answers it with
+        # the caller's own view of it.
         gh api "repos/$GITHUB_REPOSITORY" \
           --jq '"as this token: admin=\(.permissions.admin) push=\(.permissions.push) pull=\(.permissions.pull)"'
         mapfile -d '' files < <(find build/seed/assets -type f -print0 | sort -z)
@@ -166,7 +166,7 @@ jobs:
 
     - name: Point ci-seed at this generation
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         GENERATION: ${{ steps.resolve.outputs.generation }}
         COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
@@ -180,7 +180,7 @@ jobs:
 
     - name: Prune old generations
       env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         KEEP: ${{ inputs.keep }}
       run: |
         set -euo pipefail

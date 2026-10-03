@@ -72,8 +72,13 @@ jobs:
     needs: [build, test-windows-x64, test-linux-x64, test-linux-arm64, test-darwin-arm64]
     if: github.event_name == 'workflow_dispatch' && inputs.promote
     uses: ./.github/workflows/publish-seed.yml
+    # The caller's block is the ceiling: a job-level permissions list that names
+    # only contents makes every other scope `none` for the called workflow, and
+    # that workflow's own request for `actions: read` (it downloads another run's
+    # artifacts) then fails validation before the run starts.
     permissions:
       contents: write
+      actions: read
     with:
       generation: seed-${{ github.run_id }}
       commit: ${{ github.sha }}

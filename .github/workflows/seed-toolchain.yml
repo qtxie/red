@@ -52,8 +52,10 @@ jobs:
   publish:
     needs: build
     uses: ./.github/workflows/publish-seed.yml
+    # actions: read has to be granted here too - see the note in build-toolchain.yml
     permissions:
       contents: write
+      actions: read
     with:
       generation: seed-${{ github.run_id }}
       commit: ${{ github.sha }}

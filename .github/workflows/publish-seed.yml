@@ -115,11 +115,19 @@ jobs:
         python3 -m unittest discover -s tools/ci -p "test_*.py"
 
     - name: Download seed artifacts
-      uses: actions/download-artifact@v8
-      with:
-        pattern: seed-*
-        path: build/seed/artifacts
-        run-id: ${{ steps.resolve.outputs.run-id }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        RUN_ID: ${{ steps.resolve.outputs.run-id }}
+      run: |
+        set -euo pipefail
+        # Not actions/download-artifact, whose github-token input is what makes a
+        # run other than the current one legible: without it the action listed
+        # zero artifacts and still reported success, so the empty seed travelled
+        # all the way to the manifest step (run 37117305098). gh queries the REST
+        # API with this job's token, which the resolve step above already used on
+        # a foreign run, and a pattern matching nothing is an error there.
+        gh run download "$RUN_ID" --pattern 'seed-*' --dir build/seed/artifacts
+        ls -1 build/seed/artifacts
 
     - name: Assemble the seed manifest
       env:

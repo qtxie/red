@@ -139,10 +139,6 @@ arm64-codegen: context [
 	; arrive through dyld with argc/argv in X0/X1; a Linux entry starts on the
 	; kernel stack with argc at [sp].
 	target-abi: ABI_APPLE_AARCH64
-	; The level the module is being generated at. Like target-abi it is set once per
-	; generate call, because the instruction loop it steers has no argument slot for
-	; it; only the switch lowering reads it, to pick which shape to emit.
-	target-opt-level: 0
 	compiler-frame-register: arm64-encoder/FP
 	compiler-frame-active?: false
 	;-- Slots reserved below the frame pointer, shared with the collector's walk
@@ -10739,7 +10735,7 @@ arm64-codegen: context [
 						instruction-depths entry-types entry-kinds entry-flags [
 						return fail-invalid 379 "compile-function/instruction-depths#213"
 					]
-					either all [target-opt-level = 2 instruction/b >= 4][
+					either instruction/b >= 4 [
 						order: scratch/switch-case-order
 						case-index: 1
 						while [case-index <= instruction/b][
@@ -10995,7 +10991,6 @@ arm64-codegen: context [
 		target-abi: abi
 		if any [null? output capacity < 0][return fail-invalid 390 "generate/output#1"]
 		unless any [opt-level = 0 opt-level = 2][return fail-unsupported 908 "generate/opt-level#2"]
-		target-opt-level: opt-level
 		status: codegen-rsir-reader/open data size view
 		if status <> 0 [return status]
 		header: view/header

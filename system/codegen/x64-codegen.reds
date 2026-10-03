@@ -11336,11 +11336,11 @@ x64-codegen: context [
 	; so the cost of a value is the number of arms standing in front of it: the
 	; runtime's type dispatch in `walk-values` carries thirty-five case values and a
 	; scalar cell owns none of them, so it pays all thirty-five tests to reach
-	; DEFAULT. At O2 the records are instead sorted into a balanced tree of three-way
-	; tests, where a hit and a miss both cost one test per level. Arm targets, the
-	; DEFAULT edge, the first-match rule for duplicated values and every incoming
-	; edge the layout recorded stay exactly as the chain leaves them; only the tests
-	; change.
+	; DEFAULT. Four or more records are instead sorted into a balanced tree of
+	; three-way tests, where a hit and a miss both cost one test per level. Arm
+	; targets, the DEFAULT edge, the first-match rule for duplicated values and every
+	; incoming edge the layout recorded stay exactly as the chain leaves them; only
+	; the tests change.
 	;
 	; `low` and `high` are the two words of one case constant, tested at the
 	; selector's own width, so the order below must be the order the machine's test
@@ -12012,7 +12012,7 @@ x64-codegen: context [
 						]
 					]
 
-					either all [task/opt-level = 2 instruction/b >= 4][
+					either instruction/b >= 4 [
 						anchor: instruction-offsets/index - instruction-start
 						order: view/switch-case-order
 						case-index: 1

@@ -9,6 +9,14 @@ name: Publish a CI seed
 # first and never rewritten, the new manifest can never name a file that is
 # not there yet.
 #
+# Two callers, differing only in whose artifacts they mean. Called from
+# build-toolchain.yml it reads this run's own artifacts, which is why that path
+# has to build and test before it can publish. Dispatched with `source-run` it
+# reads the artifacts of a run that already happened and already passed, so
+# promoting a green generation costs the publish alone, not another full build -
+# at the price that the suites being green is something this run verifies by
+# that run's conclusion rather than by watching it.
+#
 # Nothing here is configured: the asset URLs live in the manifest, and the
 # manifest URL is derived from github.repository.
 
@@ -28,9 +36,26 @@ on:
         type: string
         required: false
         default: '5'
+      source-run:
+        description: 'run whose artifacts become the seed; empty means this run'
+        type: string
+        required: false
+        default: ''
+  workflow_dispatch:
+    inputs:
+      source-run:
+        description: 'id of the green toolchain run to publish'
+        type: string
+        required: true
+      keep:
+        description: 'how many past generations to keep'
+        type: string
+        required: false
+        default: '5'
 
 permissions:
   contents: write
+  actions: read
 
 # Two promotions must not interleave: the second could recreate ci-seed while
 # the first is still uploading.
@@ -47,6 +72,43 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v6
 
+    - name: Resolve which generation is being published
+      id: resolve
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        CALL_GENERATION: ${{ inputs.generation }}
+        CALL_COMMIT: ${{ inputs.commit }}
+        SOURCE_RUN: ${{ inputs.source-run }}
+        CURRENT_RUN: ${{ github.run_id }}
+      run: |
+        set -euo pipefail
+        # Not github.event_name: a called workflow inherits the caller's event,
+        # so a dispatched build-toolchain run would look like a dispatched
+        # publish here. The caller always names a generation; the human always
+        # names a run.
+        if [ -n "$CALL_GENERATION" ]; then
+          echo "generation=$CALL_GENERATION" >> "$GITHUB_OUTPUT"
+          echo "commit=$CALL_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "run-id=$CURRENT_RUN" >> "$GITHUB_OUTPUT"
+        elif [ -n "$SOURCE_RUN" ]; then
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN" \
+            --jq '"name=\(.name)\nconclusion=\(.conclusion)\ncommit=\(.head_sha)\n"' > run.txt
+          cat run.txt
+          # A seed is the bootstrap every later build starts from, so the run
+          # being pointed at has to have concluded green; the artifact guard
+          # below catches a run that never built a toolchain at all.
+          grep -q '^conclusion=success$' run.txt || {
+            echo "run $SOURCE_RUN is not green; nothing to promote" >&2
+            exit 1
+          }
+          echo "generation=seed-$SOURCE_RUN" >> "$GITHUB_OUTPUT"
+          echo "commit=$(sed -n 's/^commit=//p' run.txt)" >> "$GITHUB_OUTPUT"
+          echo "run-id=$SOURCE_RUN" >> "$GITHUB_OUTPUT"
+        else
+          echo "no generation and no source-run: nothing to publish" >&2
+          exit 1
+        fi
+
     - name: Audit seed tooling
       run: |
         set -euo pipefail
@@ -57,11 +119,12 @@ jobs:
       with:
         pattern: seed-*
         path: build/seed/artifacts
+        run-id: ${{ steps.resolve.outputs.run-id }}
 
     - name: Assemble the seed manifest
       env:
-        GENERATION: ${{ inputs.generation }}
-        COMMIT: ${{ inputs.commit }}
+        GENERATION: ${{ steps.resolve.outputs.generation }}
+        COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
         set -euo pipefail
         python3 tools/ci/seed-manifest.py \
@@ -75,8 +138,8 @@ jobs:
     - name: Publish the generation release
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GENERATION: ${{ inputs.generation }}
-        COMMIT: ${{ inputs.commit }}
+        GENERATION: ${{ steps.resolve.outputs.generation }}
+        COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
         set -euo pipefail
         mapfile -d '' files < <(find build/seed/assets -type f -print0 | sort -z)
@@ -90,8 +153,8 @@ jobs:
     - name: Point ci-seed at this generation
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        GENERATION: ${{ inputs.generation }}
-        COMMIT: ${{ inputs.commit }}
+        GENERATION: ${{ steps.resolve.outputs.generation }}
+        COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
         set -euo pipefail
         gh release delete ci-seed --yes 2>/dev/null || true

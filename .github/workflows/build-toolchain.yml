@@ -12,7 +12,9 @@ name: Build the Red toolchain
 # repository watcher, so the seed advances only when this workflow is dispatched
 # with `promote`, and then only from a generation whose four suite sets are
 # green -- the seed is the bootstrap every later build starts from, so a
-# generation that cannot pass its own suites must not become one.
+# generation that cannot pass its own suites must not become one. That job
+# republishes *this* run, so it pays the build and the suites again; a run that
+# is already green is published directly by `publish-seed.yml` instead.
 
 on:
   push:

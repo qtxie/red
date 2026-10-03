@@ -150,12 +150,6 @@ jobs:
         COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
         set -euo pipefail
-        # Printed before the create: the 403 this step got said "not accessible
-        # by integration", which names the caller as the Actions app, so what is
-        # in question is that credential's reach. GET on the repo answers it with
-        # the caller's own view of it.
-        gh api "repos/$GITHUB_REPOSITORY" \
-          --jq '"as this token: admin=\(.permissions.admin) push=\(.permissions.push) pull=\(.permissions.pull)"'
         mapfile -d '' files < <(find build/seed/assets -type f -print0 | sort -z)
         test "${#files[@]}" -gt 0
         gh release create "$GENERATION" \

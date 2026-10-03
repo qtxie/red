@@ -591,10 +591,12 @@ Normal work must use the designated existing bootstrap executable or the latest
 proven hybrid generation, never an intermediate Stage1 executable. The retired
 Rebol Stage0 path is not part of verification.
 Ordinary native checks use development mode: omit `-r`, keep the designated
-bootstrap's `libRedRT.dll` beside the output, and use the default `-O0` feedback
-path. Release mode is reserved for gates that specifically require a standalone
-artifact. O2 has a separate performance build and never participates in normal
-Hn-to-Hn+1 feedback measurement.
+bootstrap's `libRedRT.dll` beside the output, on the default feedback path.
+Release mode is reserved for gates that specifically require a standalone
+artifact. The driver has no `-O` flag: O0 is the only level a command line can
+ask for, so every build of a toolchain source is the same level and no Hn-to-Hn+1
+comparison can be confounded by one. The backend keeps its O2 analyses for a job
+that sets `opt-level` itself.
 
 Self-compilation timing uses one known-good matching `libRedRT.dll`,
 `libRedRT-defs.red`, and `libRedRT-include.red` set. Rebuilding libRedRT and

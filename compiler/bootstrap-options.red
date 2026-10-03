@@ -46,6 +46,9 @@ compiler-options: context [
 			;-- the client platform of the program under compilation, and it
 			;-- cannot tell the Linux targets apart either.
 			option-set options 'target compiler-toolchain/build-target
+			;-- No `-O` flag: 0 is the only level the driver reaches. The one -O2
+			;-- win this compiler measured -- the balanced switch tree -- now fires
+			;-- at every level, and -O2 still miscompiles a SysV argument register.
 			option-set options 'opt-level 0
 		]
 		either block? args [position: args][position: copy []]
@@ -69,13 +72,6 @@ compiler-options: context [
 				token = "--self-check" [option-set options 'self-check? true]
 				find ["-r" "--release"] token [option-set options 'release? true]
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
-				token = "-O0" [option-set options 'opt-level 0]
-				token = "-O1" [
-					either hybrid [
-						return make error! "hybrid codegen supports O0 and O2, not O1"
-					][option-set options 'opt-level 1]
-				]
-				token = "-O2" [option-set options 'opt-level 2]
 				token = "--dump-o2-ir" [
 					position: next position
 					if tail? position [return missing-value token]

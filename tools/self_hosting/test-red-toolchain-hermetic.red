@@ -4,7 +4,7 @@ Red [
 	Purpose: {
 		Copies a standalone hybrid toolchain into a scratch directory and drives
 		it there, with nothing but the fixtures in fixtures/toolchain: release
-		and -O2 Red builds, embedded modules, Red/System, a development build
+		and development Red builds, embedded modules, Red/System, a development build
 		linked against libRedRT, a Red/System shared library whose export is
 		called back through a loader the toolchain itself compiles, and a native
 		View program. Every image is checked by reading it, no compilation may
@@ -229,10 +229,6 @@ hermetic: func [/local result resources exports marker][
 	check-fixture "hello-release" reduce [
 		"-r" "-t" target "-o" "hello-release.exe" "hello.red"
 	] %hello-release.exe "RED-TOOLCHAIN-HERMETIC-OK"
-
-	check-fixture "hello-o2" reduce [
-		"-r" "-O2" "-t" target "-o" "hello-o2.exe" "hello.red"
-	] %hello-o2.exe "RED-TOOLCHAIN-HERMETIC-OK"
 
 	check-fixture "modules" reduce [
 		"-r" "-t" target "-o" "modules.exe" "modules.red"

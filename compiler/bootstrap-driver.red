@@ -47,7 +47,7 @@ print-usage: does [
 	#either config/show = 'X86-64-Hybrid-only [
 		print rejoin [
 			"Usage: " compiler-command
-			" [-c|--dev|-r] [-u] [-d] [-n] [-O0|-O2] [-dlib] "
+			" [-c|--dev|-r] [-u] [-d] [-n] [-dlib] "
 			"[-t MSDOS-X86-64|Windows-X86-64|Darwin-ARM64|Linux-X86-64|Linux-ARM64] "
 			"[-o output] source.red|source.reds"
 		]
@@ -58,7 +58,7 @@ print-usage: does [
 	][
 		print rejoin [
 			"Usage: " compiler-command
-			" [-c|--dev|-r] [-u] [-d] [-n] [-O0|-O1|-O2] "
+			" [-c|--dev|-r] [-u] [-d] [-n] "
 			"[--dump-o2-ir file] [-dlib] [-t target] "
 			"[-o output] "
 			"source.red|source.reds"

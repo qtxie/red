@@ -233,7 +233,7 @@ console tools/self_hosting/test-red-toolchain-hermetic.red \
     --toolchain build/red-toolchain/windows-x64/red-toolchain.exe
 ```
 
-It builds and runs release and development Red programs, `-O2`, JSON and CSV
+It builds and runs release and development Red programs, JSON and CSV
 modules, Red/System, a callable DLL export, and a self-closing native View
 window. It verifies output architecture, imports, exports and
 repository-path isolation. Pass `--keep` to preserve the scratch directory

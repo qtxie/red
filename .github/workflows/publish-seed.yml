@@ -17,11 +17,18 @@ name: Publish a CI seed
 # at the price that the suites being green is something this run verifies by
 # that run's conclusion rather than by watching it.
 #
-# Nothing here is configured: the asset URLs live in the manifest, and the
-# manifest URL is derived from github.repository.
+# The three release steps write with a repository secret, SEED_PUBLISH_TOKEN: a
+# fine-grained PAT whose only grant is Contents read and write. That is the one
+# thing this repo's built-in token does not have - see the note in AGENTS.md.
+# Everything else stays unconfigured: the asset URLs live in the manifest, and
+# the manifest URL is derived from github.repository.
 
 on:
   workflow_call:
+    secrets:
+      SEED_PUBLISH_TOKEN:
+        description: 'fine-grained PAT, Contents read and write; publishes the release'
+        required: true
     inputs:
       generation:
         description: 'release tag that will hold this generation'
@@ -54,7 +61,10 @@ on:
         default: '5'
 
 permissions:
-  contents: write
+  # Read only: the built-in token checks the run out and reads its artifacts,
+  # while the release writes below carry SEED_PUBLISH_TOKEN. Nothing here needs
+  # to ask for contents: write, and asking for it is what invited a probe.
+  contents: read
   actions: read
 
 # Two promotions must not interleave: the second could recreate ci-seed while
@@ -145,7 +155,12 @@ jobs:
 
     - name: Publish the generation release
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # Not secrets.GITHUB_TOKEN: it is refused on POST /releases here, while
+        # the same token reads runs and artifacts (AGENTS.md). A fine-grained PAT
+        # in a repository secret carries the release writes, granted only
+        # Contents read and write. An unset secret gives gh no credential, so
+        # this step fails out loud rather than publishing nothing quietly.
+        GITHUB_TOKEN: ${{ secrets.SEED_PUBLISH_TOKEN }}
         GENERATION: ${{ steps.resolve.outputs.generation }}
         COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
@@ -160,7 +175,7 @@ jobs:
 
     - name: Point ci-seed at this generation
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.SEED_PUBLISH_TOKEN }}
         GENERATION: ${{ steps.resolve.outputs.generation }}
         COMMIT: ${{ steps.resolve.outputs.commit }}
       run: |
@@ -174,7 +189,7 @@ jobs:
 
     - name: Prune old generations
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.SEED_PUBLISH_TOKEN }}
         KEEP: ${{ inputs.keep }}
       run: |
         set -euo pipefail
@@ -186,8 +201,14 @@ jobs:
         keep = int(sys.argv[1])
         with open(sys.argv[2]) as handle:
             releases = json.load(handle)
+        # A generation this workflow publishes is named by a run id, so the part
+        # after "seed-" is all digits. seed-local-<sha> tags come from
+        # tools/ci/build-seed-local.sh instead, and ci-seed can point at one of
+        # them: this step deletes, so it reaches only its own series.
         generations = sorted(
-            (item for item in releases if item["tagName"].startswith("seed-")),
+            (item for item in releases
+             if item["tagName"].startswith("seed-")
+             and item["tagName"][len("seed-"):].isdigit()),
             key=lambda item: item["createdAt"],
             reverse=True,
         )

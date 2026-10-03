@@ -75,10 +75,16 @@ jobs:
     # The caller's block is the ceiling: a job-level permissions list that names
     # only contents makes every other scope `none` for the called workflow, and
     # that workflow's own request for `actions: read` (it downloads another run's
-    # artifacts) then fails validation before the run starts.
+    # artifacts) then fails validation before the run starts. Reads are all this
+    # job hands over: the release writes carry their own credential, in the
+    # secret below.
     permissions:
-      contents: write
+      contents: read
       actions: read
     with:
       generation: seed-${{ github.run_id }}
       commit: ${{ github.sha }}
+    # Secrets are not inherited by a called workflow unless the caller hands
+    # them over, and publish-seed declares this one as required.
+    secrets:
+      SEED_PUBLISH_TOKEN: ${{ secrets.SEED_PUBLISH_TOKEN }}

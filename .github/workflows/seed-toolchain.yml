@@ -54,8 +54,12 @@ jobs:
     uses: ./.github/workflows/publish-seed.yml
     # actions: read has to be granted here too - see the note in build-toolchain.yml
     permissions:
-      contents: write
+      contents: read
       actions: read
     with:
       generation: seed-${{ github.run_id }}
       commit: ${{ github.sha }}
+    # Required by publish-seed: the release writes use this PAT, not the
+    # built-in token, and a called workflow sees no secrets unless handed.
+    secrets:
+      SEED_PUBLISH_TOKEN: ${{ secrets.SEED_PUBLISH_TOKEN }}

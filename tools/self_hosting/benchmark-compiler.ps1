@@ -7,8 +7,6 @@ param(
     [string]$Target = "MSDOS-X86-64",
     [int]$Runs = 1,
     [string]$OutputRoot = "build\compiler-benchmarks",
-    [ValidateSet("default", "O0", "O1", "O2")]
-    [string]$Optimization = "default",
     [switch]$Stage0,
     [switch]$NoDebug,
     [switch]$SkipRunVerification
@@ -119,7 +117,6 @@ for ($run = 1; $run -le $Runs; $run++) {
     }
     $arguments.Add("-r")
     if (-not $NoDebug) { $arguments.Add("-d") }
-    if ($Optimization -ne "default") { $arguments.Add("-$Optimization") }
     foreach ($argument in @("-t", $Target, "-o", $outputPath, $sourcePath)) {
         $arguments.Add($argument)
     }
@@ -193,7 +190,6 @@ $report = [pscustomobject]@{
     Target = $Target
     Release = $true
     Debug = -not $NoDebug
-    Optimization = $Optimization
     Stage0 = [bool]$Stage0
     Runs = $results
 }

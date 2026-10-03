@@ -45,8 +45,7 @@ rsir-source-audit: context [
 		compiler-system-job/job-set job 'link? false
 		compiler-system-job/job-set job 'runtime? true
 		compiler-system-job/job-set job 'debug? false
-		compiler-system-job/job-set job 'opt-level 0
-		compiler-system-job/job-set job 'o2-ir-dump none
+		compiler-system-job/job-set job 'rsir-dump none
 
 		definitions: make hash! 32
 		keywords: make block! 32

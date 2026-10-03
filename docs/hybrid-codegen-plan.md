@@ -408,26 +408,27 @@ grow combined semantic forms such as "call with first literal argument" or
 "return current parameter". Argument movement, calls, loads, stores, and
 returns are composed by the selector from ordinary primitives.
 
-There are exactly two optimization levels:
+There is one codegen level and no flag selects another: the driver parses no
+`-O`, the compilation job carries no `opt-level`, and neither backend validates a
+level.
 
-- O0 is the default bootstrap and development path. It performs only linear
-  analysis and inexpensive selector work: direct immediates and addresses,
-  short encodings, zero-cost coercions, obvious move elimination, and a fast
-  value-location stack. It must compile quickly and produce code at least as
-  good as the old pure Red compiler's default O1 path.
-- O2 enables a small Pareto set of high-value cross-instruction analyses:
-  constant and copy propagation, local and temporary register promotion,
-  redundant load/store elimination, address folding, call-argument move
-  coalescing, branch simplification, and unreachable-block removal.
+That single path performs linear analysis and inexpensive selector work: direct
+immediates and addresses, short encodings, zero-cost coercions, obvious move
+elimination, and a fast value-location stack, plus the cross-instruction folds
+that measured cheaper than the code they replace: a literal becoming the
+immediate operand of the arithmetic that consumes it, register pairs for
+adjacent arithmetic, a resolved literal logic branch (the literal and its
+unselected successor leave the native CFG, reusing the codegen effect arrays and
+adding no serialized field or frontend rule), call-argument direct placement,
+and the balanced three-way switch tree for a dispatch of four or more records.
 
-O1 is invalid, not an alias. O2 is exposed only with a real native
-transformation and must never silently run the O0 path. Its first enabled
-transform resolves an adjacent literal logic branch when no control edge can
-enter after the literal, removes the literal and unselected successor from the
-native CFG, and emits only the selected edge. It reuses the codegen effect
-arrays and adds no serialized field or frontend rule. Global SSA, aggressive
-inlining, complex loop transforms, and vectorization are outside the initial
-O2 scope.
+An `-O2` spelling once gated a second path: a live-interval allocator that
+promoted locals and temporaries into callee-saved registers, spilled what did
+not fit, and gave each frame local a register home. It is deleted, along with
+the flag. A toolchain built with it measured 3.4% slower on a self-compile for
+2.0% fewer image bytes, the same direction as the interpreted suite leg's
++2.79%, and both arms emit identical-size code at the level that survives. Global SSA, aggressive inlining, complex loop transforms and
+vectorization were outside the original scope and remain outside it.
 
 Derived native arrays are codegen working memory, not a serialized second IR.
 They exist only where layout, control flow, ABI lowering, or allocation
@@ -593,10 +594,10 @@ Rebol Stage0 path is not part of verification.
 Ordinary native checks use development mode: omit `-r`, keep the designated
 bootstrap's `libRedRT.dll` beside the output, on the default feedback path.
 Release mode is reserved for gates that specifically require a standalone
-artifact. The driver has no `-O` flag: O0 is the only level a command line can
-ask for, so every build of a toolchain source is the same level and no Hn-to-Hn+1
-comparison can be confounded by one. The backend keeps its O2 analyses for a job
-that sets `opt-level` itself.
+artifact. The driver has no `-O` flag and the compiler carries no `opt-level`:
+there is one level, so every build of a toolchain source is at that level and no
+Hn-to-Hn+1 comparison can be confounded by one. The backend has no second level
+either; the analyses that used to be gated on it are deleted rather than parked.
 
 Self-compilation timing uses one known-good matching `libRedRT.dll`,
 `libRedRT-defs.red`, and `libRedRT-include.red` set. Rebuilding libRedRT and

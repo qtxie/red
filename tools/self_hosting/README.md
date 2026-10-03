@@ -64,13 +64,19 @@ driver, which excludes WSL startup from every timed sample:
     -Compiler .\build\self-hosting\red-bootstrap-linux-x64.exe `
     -Source .\tools\self_hosting\fixtures\benchmarks\integer-loop.reds `
     -Target Linux-X86-64 `
-    -Optimizations O0,O2 `
+    -Arms candidate,reference `
+    -ArmFlags @{reference = @("-O2"); candidate = @()} `
     -ProgramRuntime WSL `
     -Runs 31
 ```
 
+An arm is a name plus whatever extra command line that build needs, so two
+compilers or two flag sets can be scored against each other; `-ArmFlags` is
+empty by default because the compiler has one codegen level and no flag selects
+another. Point a non-default flag set at a bootstrap that still parses it.
+
 The harness verifies exit status, stdout, and stderr before warmup, rotates the
-optimization order for interleaved samples, and records wall time, CPU time,
+arm order for interleaved samples, and records wall time, CPU time,
 compiler and source hashes, target, WSL platform, and paired speedups in
 `report.json`. Use `-WslDistribution NAME` when the default distribution is not
 the intended test environment.
@@ -81,7 +87,7 @@ compiler and pass the target explicitly:
 ```powershell
 & .\build\self-hosting\merge-red64\hybrid-compiler202.exe `
     -r -t MSDOS-X86-64 `
-    -o .\build\case-control-O2.exe `
+    -o .\build\case-control.exe `
     .\tools\self_hosting\fixtures\backend\case-control.reds
 ```
 

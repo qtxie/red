@@ -1,6 +1,6 @@
 Red [
-	Title: "Red x86-64 O2 GC safepoint root test"
-	File:  %x64-o2-gc-safepoint.red
+	Title: "Red x86-64 GC safepoint root test"
+	File:  %x64-gc-safepoint.red
 ]
 
 #system [
@@ -43,4 +43,4 @@ unless 7500 = gc-live-series-length values text [quit/return 1]
 unless values/6000 = 6000 [quit/return 1]
 unless text/1500 = #"x" [quit/return 1]
 
-print "X64-O2-GC-SAFEPOINT-OK"
+print "X64-GC-SAFEPOINT-OK"

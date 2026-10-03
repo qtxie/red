@@ -104,8 +104,7 @@ compiler-system-job/job-set job 'backend-mode 'rsir
 compiler-system-job/job-set job 'link? false
 compiler-system-job/job-set job 'runtime? to logic! source-runtime?
 compiler-system-job/job-set job 'debug? false
-compiler-system-job/job-set job 'opt-level 0
-compiler-system-job/job-set job 'o2-ir-dump none
+compiler-system-job/job-set job 'rsir-dump none
 compiler-system-job/job-set job 'dev-mode? false
 
 system-dialect/compile/options source job
@@ -164,8 +163,7 @@ run-linked-fixture: func [
 	compiler-system-job/job-set job 'link? true
 	compiler-system-job/job-set job 'runtime? to logic! runtime
 	compiler-system-job/job-set job 'debug? false
-	compiler-system-job/job-set job 'opt-level 0
-	compiler-system-job/job-set job 'o2-ir-dump none
+	compiler-system-job/job-set job 'rsir-dump none
 	compiler-system-job/job-set job 'dev-mode? false
 	compiler-system-job/job-set job 'build-prefix output-dir
 	compiler-system-job/job-set job 'build-basename output-name

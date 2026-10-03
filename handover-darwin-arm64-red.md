@@ -158,7 +158,7 @@ ARM64 measure compile failure function=1803 status=-1 ordinal=145
 
 ## 7. Diagnostic tooling (in the tree, keep them)
 
-- `--dump-o2-ir <file>` on any hybrid compiler writes the whole RSIR
+- `--dump-rsir <file>` on any hybrid compiler writes the whole RSIR
   module (compiler-rsir-core.red). The build-time failure dump prints
   `FAILING op=a/b/c` = the exact failing instruction (uses
   last-compile-ordinal; trustworthy).
@@ -215,7 +215,7 @@ assertions 0 failed; Red unit 16,826 assertions 0 failed.
 2. Package with the run-suite.sh pattern (already proven) and run on
    macmini. The Red runtime's startup, GC and print on Darwin are
    exercised for the first time here — treat any runtime crash like a
-   codegen bug: `--dump-o2-ir`, find the function, compare the ARM64
+   codegen bug: `--dump-rsir`, find the function, compare the ARM64
    emission against x64.
 3. Known-safe anchors: hello-rs prints correctly on the mac; exceptions,
    atomic and dylib smoke tests passed via the RS suite.

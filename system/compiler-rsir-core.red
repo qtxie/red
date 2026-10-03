@@ -199,12 +199,6 @@ system-dialect: context [
 			][
 				compiler/throw-error "invalid hybrid target linking mode"
 			]
-			any [
-				not integer? job/opt-level
-				all [job/opt-level <> 0 job/opt-level <> 2]
-			][
-				compiler/throw-error "hybrid codegen supports O0 and O2, not O1"
-			]
 			any [job/need-main? job/red-only? job/libRed? job/libRedRT-update?][
 				compiler/throw-error "RSIR frontend received unsupported module lifecycle options"
 			]
@@ -306,9 +300,9 @@ system-dialect: context [
 			]
 		]
 		last-rsir: output
-		if job/o2-ir-dump [
-			write/binary to file! job/o2-ir-dump last-rsir
-			print ["...RSIR dump       :" job/o2-ir-dump]
+		if job/rsir-dump [
+			write/binary to file! job/rsir-dump last-rsir
+			print ["...RSIR dump       :" job/rsir-dump]
 		]
 	]
 
@@ -318,7 +312,7 @@ system-dialect: context [
 		forever [
 			output: make binary! capacity
 			last-status: codegen-module
-				last-rsir output codegen-architecture codegen-abi job/opt-level
+				last-rsir output codegen-architecture codegen-abi
 			if any [last-status <> 4 capacity = MAX-CODE-BYTES][break]
 			required: codegen-required
 			if required > MAX-CODE-BYTES [break]

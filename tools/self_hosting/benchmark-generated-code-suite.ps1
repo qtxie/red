@@ -18,12 +18,10 @@ param(
         "tools\self_hosting\fixtures\benchmarks\date-arithmetic-loop.reds"
     ),
     [string]$Target = "MSDOS-X86-64",
-    [ValidateSet("O0", "O1", "O2")]
-    [string[]]$Optimizations = @("O0", "O2"),
-    [ValidateSet("O0", "O1", "O2")]
-    [string]$BaselineOptimization = "O0",
-    [ValidateSet("O0", "O1", "O2")]
-    [string]$CandidateOptimization = "O2",
+    [string[]]$Arms = @("default", "candidate"),
+    [hashtable]$ArmFlags = @{},
+    [string]$BaselineArm = "default",
+    [string]$CandidateArm = "candidate",
     [int]$Warmups = 2,
     [int]$Runs = 15,
     [int]$BootstrapIterations = 2000,
@@ -88,11 +86,11 @@ function Get-PairedRuntimeRatios {
     )
 
     $baselineByRun = @{}
-    foreach ($sample in @($Report.Samples | Where-Object Optimization -eq $Baseline)) {
+    foreach ($sample in @($Report.Samples | Where-Object Arm -eq $Baseline)) {
         $baselineByRun[[int]$sample.Run] = [double]$sample.WallSeconds
     }
     $candidateByRun = @{}
-    foreach ($sample in @($Report.Samples | Where-Object Optimization -eq $Candidate)) {
+    foreach ($sample in @($Report.Samples | Where-Object Arm -eq $Candidate)) {
         $candidateByRun[[int]$sample.Run] = [double]$sample.WallSeconds
     }
     if ($baselineByRun.Count -ne $candidateByRun.Count) {
@@ -177,14 +175,14 @@ if (-not (Test-Path -LiteralPath $benchmarkRunner -PathType Leaf)) {
 if ($Sources.Count -eq 0) { throw "At least one benchmark source is required" }
 if ($Runs -lt 1) { throw "Runs must be at least 1" }
 if ($BootstrapIterations -lt 1) { throw "BootstrapIterations must be at least 1" }
-if ($BaselineOptimization -eq $CandidateOptimization) {
-    throw "Baseline and candidate optimization levels must differ"
+if ($BaselineArm -eq $CandidateArm) {
+    throw "Baseline and candidate arms must differ"
 }
-if ($Optimizations -notcontains $BaselineOptimization) {
-    throw "Optimizations does not contain baseline $BaselineOptimization"
+if ($Arms -notcontains $BaselineArm) {
+    throw "Arms does not contain baseline $BaselineArm"
 }
-if ($Optimizations -notcontains $CandidateOptimization) {
-    throw "Optimizations does not contain candidate $CandidateOptimization"
+if ($Arms -notcontains $CandidateArm) {
+    throw "Arms does not contain candidate $CandidateArm"
 }
 if ($MaximumRegressionPercent -lt 0.0) {
     throw "MaximumRegressionPercent cannot be negative"
@@ -225,7 +223,8 @@ foreach ($sourcePath in $sourcePaths) {
         Compiler = $compilerPath
         Source = $sourcePath
         Target = $Target
-        Optimizations = $Optimizations
+        Arms = $Arms
+        ArmFlags = $ArmFlags
         Warmups = $Warmups
         Runs = $Runs
         ProgramArguments = $ProgramArguments
@@ -248,15 +247,15 @@ foreach ($sourcePath in $sourcePaths) {
     if ($null -eq $runtimeMetadata) { $runtimeMetadata = $report.ProgramRuntime }
     $ratios = [double[]](Get-PairedRuntimeRatios `
         -Report $report `
-        -Baseline $BaselineOptimization `
-        -Candidate $CandidateOptimization)
+        -Baseline $BaselineArm `
+        -Candidate $CandidateArm)
     $medianRatio = Get-Median $ratios
     $interval = Get-BootstrapMedianInterval `
         -Values $ratios `
         -Iterations $BootstrapIterations `
         -Seed (17011 + $benchmarkIndex)
-    $baselineSummary = @($report.Summary | Where-Object Optimization -eq $BaselineOptimization)[0]
-    $candidateSummary = @($report.Summary | Where-Object Optimization -eq $CandidateOptimization)[0]
+    $baselineSummary = @($report.Summary | Where-Object Arm -eq $BaselineArm)[0]
+    $candidateSummary = @($report.Summary | Where-Object Arm -eq $CandidateArm)[0]
     $benchmarkResults.Add([pscustomobject]@{
         Name = $sourceName
         Source = $sourcePath
@@ -326,9 +325,9 @@ $report = [pscustomobject]@{
     WslDistribution = $WslDistribution
     Release = $true
     Debug = -not $NoDebug
-    Optimizations = $Optimizations
-    BaselineOptimization = $BaselineOptimization
-    CandidateOptimization = $CandidateOptimization
+    Arms = $Arms
+    BaselineArm = $BaselineArm
+    CandidateArm = $CandidateArm
     Warmups = $Warmups
     Runs = $Runs
     BootstrapIterations = $BootstrapIterations

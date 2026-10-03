@@ -10,10 +10,10 @@ coordinates of the instruction it rejected:
 `tools/codegen/sync-codegen-sites.py --locate 236` turns that into a source
 line; this script turns the coordinates into the construct that was being
 compiled. Both function and instruction ids are 1-based, so `function=2541`
-is the row at index 2540 below. Dump the IR with `--dump-o2-ir <path>`:
+is the row at index 2540 below. Dump the IR with `--dump-rsir <path>`:
 
     hybrid-compiler.exe -r -t MSDOS-X86-64 \
-        --dump-o2-ir build/tmp/prog.ir -o build/tmp/prog.exe prog.red
+        --dump-rsir build/tmp/prog.ir -o build/tmp/prog.exe prog.red
 
 usage:
     python tools/codegen/rsir-dump.py <file.ir>                 # header only

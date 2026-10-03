@@ -31,7 +31,6 @@ codegen-bridge: context [
 		ir artifact [red-binary!]
 		architecture [integer!]
 		abi [integer!]
-		opt-level [integer!]
 		return: [integer!]
 		/local series [series!]
 			ir-data output [byte-ptr!]
@@ -53,10 +52,10 @@ codegen-bridge: context [
 		output: (as byte-ptr! series/offset) + artifact/head
 		written: case [
 			architecture = ARCH_X64 [
-				x64-codegen/generate ir-data ir-size output capacity abi opt-level
+				x64-codegen/generate ir-data ir-size output capacity abi
 			]
 			architecture = ARCH_ARM64 [
-				arm64-codegen/generate ir-data ir-size output capacity abi opt-level
+				arm64-codegen/generate ir-data ir-size output capacity abi
 			]
 			true [return reject-arguments 5 "run/architecture"]
 		]

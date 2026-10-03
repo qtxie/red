@@ -31,7 +31,7 @@ def run_program(program, arguments, timeout_seconds, stage):
     except subprocess.TimeoutExpired as error:
         raise BenchmarkError(
             "{} {} timed out after {} seconds".format(
-                program["Optimization"], stage, timeout_seconds
+                program["Arm"], stage, timeout_seconds
             )
         ) from error
     elapsed = (time.perf_counter_ns() - started) / 1_000_000_000.0
@@ -53,12 +53,12 @@ def run_program(program, arguments, timeout_seconds, stage):
 
 
 def assert_behavior(program, stage, measurement, request, expected):
-    optimization = program["Optimization"]
+    arm = program["Arm"]
     expected_exit_code = request["ExpectedExitCode"]
     if measurement["ExitCode"] != expected_exit_code:
         raise BenchmarkError(
             "{} {} exited with {}, expected {}".format(
-                optimization,
+                arm,
                 stage,
                 measurement["ExitCode"],
                 expected_exit_code,
@@ -69,13 +69,13 @@ def assert_behavior(program, stage, measurement, request, expected):
     if measurement["StdoutBytes"] != expected["StdoutBytes"]:
         raise BenchmarkError(
             "{} {} produced different stdout from {}".format(
-                optimization, stage, expected["Optimization"]
+                arm, stage, expected["Arm"]
             )
         )
     if measurement["StderrBytes"] != expected["StderrBytes"]:
         raise BenchmarkError(
             "{} {} produced different stderr from {}".format(
-                optimization, stage, expected["Optimization"]
+                arm, stage, expected["Arm"]
             )
         )
 
@@ -92,13 +92,13 @@ def run_benchmark(request):
         assert_behavior(program, "verification", measurement, request, expected)
         if expected is None:
             expected = {
-                "Optimization": program["Optimization"],
+                "Arm": program["Arm"],
                 "StdoutBytes": measurement["StdoutBytes"],
                 "StderrBytes": measurement["StderrBytes"],
             }
         verification.append(
             {
-                "Optimization": program["Optimization"],
+                "Arm": program["Arm"],
                 "ExitCode": measurement["ExitCode"],
                 "Stdout": decode_output(measurement["StdoutBytes"]),
                 "Stderr": decode_output(measurement["StderrBytes"]),
@@ -123,7 +123,7 @@ def run_benchmark(request):
                 {
                     "Run": run,
                     "Position": position + 1,
-                    "Optimization": program["Optimization"],
+                    "Arm": program["Arm"],
                     "WallSeconds": measurement["WallSeconds"],
                     "CpuSeconds": measurement["CpuSeconds"],
                     "PeakWorkingSetBytes": measurement["PeakWorkingSetBytes"],

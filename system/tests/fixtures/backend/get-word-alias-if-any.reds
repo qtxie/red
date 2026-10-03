@@ -1,5 +1,5 @@
 Red/System [
-	Title: "O2 get-word function alias in IF/ANY"
+	Title: "get-word function alias in IF/ANY"
 ]
 
 callback!: alias function! [value [integer!] return: [integer!]]

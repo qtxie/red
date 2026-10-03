@@ -14,8 +14,7 @@ compiler-options: context [
 			release?: false
 			debug?: false
 			no-runtime?: false
-			opt-level: 1
-			o2-ir-dump: none
+			rsir-dump: none
 			red-only?: false
 			no-compress?: false
 			show-func-map?: false
@@ -46,10 +45,6 @@ compiler-options: context [
 			;-- the client platform of the program under compilation, and it
 			;-- cannot tell the Linux targets apart either.
 			option-set options 'target compiler-toolchain/build-target
-			;-- No `-O` flag: 0 is the only level the driver reaches. The one -O2
-			;-- win this compiler measured -- the balanced switch tree -- now fires
-			;-- at every level, and -O2 still miscompiles a SysV argument register.
-			option-set options 'opt-level 0
 		]
 		either block? args [position: args][position: copy []]
 		while [not tail? position][
@@ -72,10 +67,10 @@ compiler-options: context [
 				token = "--self-check" [option-set options 'self-check? true]
 				find ["-r" "--release"] token [option-set options 'release? true]
 				find ["-d" "--debug" "--debug-stabs"] token [option-set options 'debug? true]
-				token = "--dump-o2-ir" [
+				token = "--dump-rsir" [
 					position: next position
 					if tail? position [return missing-value token]
-					option-set options 'o2-ir-dump to string! position/1
+					option-set options 'rsir-dump to string! position/1
 				]
 				find ["-dlib" "--dll"] token [option-set options 'dll? true]
 				find ["-u" "--update-libRedRT"] token [
@@ -119,8 +114,7 @@ compiler-options: context [
 		dev?: not any [release? update?]
 		overrides: reduce [
 			'debug? option-get options 'debug?
-			'opt-level option-get options 'opt-level
-			'o2-ir-dump option-get options 'o2-ir-dump
+			'rsir-dump option-get options 'rsir-dump
 			'static-link? false
 			'runtime? not option-get options 'no-runtime?
 			'red-only? option-get options 'red-only?

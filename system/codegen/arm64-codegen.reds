@@ -10946,7 +10946,7 @@ arm64-codegen: context [
 		data [byte-ptr!]
 		size [integer!]
 		output [byte-ptr!]
-		capacity abi opt-level [integer!]
+		capacity abi [integer!]
 		return: [integer!]
 		/local view [rsir-view! value]
 			scratch [arm64-function-scratch! value]
@@ -10990,7 +10990,6 @@ arm64-codegen: context [
 		]
 		target-abi: abi
 		if any [null? output capacity < 0][return fail-invalid 390 "generate/output#1"]
-		unless any [opt-level = 0 opt-level = 2][return fail-unsupported 908 "generate/opt-level#2"]
 		status: codegen-rsir-reader/open data size view
 		if status <> 0 [return status]
 		header: view/header

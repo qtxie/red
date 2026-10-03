@@ -59,7 +59,7 @@ print-usage: does [
 		print rejoin [
 			"Usage: " compiler-command
 			" [-c|--dev|-r] [-u] [-d] [-n] "
-			"[--dump-o2-ir file] [-dlib] [-t target] "
+			"[--dump-rsir file] [-dlib] [-t target] "
 			"[-o output] "
 			"source.red|source.reds"
 		]
@@ -170,7 +170,6 @@ build-libRedRT: func [
 	compiler-system-job/job-set job 'GUI-engine none
 	compiler-system-job/job-set job 'draw-engine none
 	compiler-system-job/job-set job 'debug? compiler-system-job/job-get app-job 'debug?
-	compiler-system-job/job-set job 'opt-level compiler-system-job/job-get app-job 'opt-level
 	compiler-system-job/job-set job 'redbin-compress? compiler-system-job/job-get app-job 'redbin-compress?
 	compiler-system-job/job-set job 'compiler-version compiler-version
 	compiler-system-job/job-set job 'compiler-build-date compiler-build-date

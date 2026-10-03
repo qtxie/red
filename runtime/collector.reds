@@ -1135,7 +1135,7 @@ collector: context [
 					either GET_UNIT(s) = 16 [
 						mark-block-node as int-ptr! sp
 					][
-						keep-node as node! entry			;-- the slot this walk already resolved
+						keep-node entry					;-- the slot this walk already resolved
 						if GET_UNIT(s) = 1 [mark-hashtable-node entry]
 					]
 				]
